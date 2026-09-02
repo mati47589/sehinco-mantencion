@@ -137,12 +137,17 @@
   .switch input:checked + .track::after{ transform:translateX(19px); background:var(--on-accent); }
 
   /* ================= TABLAS ELÉCTRICAS ================= */
-  .mini-table-wrap{ overflow-x:auto; border-radius:10px; border:1px solid var(--border); }
-  .mini-table{ width:100%; border-collapse:collapse; font-size:11.5px; min-width:520px; }
-  .mini-table th, .mini-table td{ border:1px solid var(--border); padding:6px 5px; text-align:center; }
-  .mini-table th{ background:var(--surface-2); color:var(--text-dim); font-weight:700; font-size:11px; text-transform:uppercase; }
-  .mini-table td input{ width:100%; min-height:30px; padding:4px; font-size:12px; border:none; background:transparent; text-align:center; }
-  .mini-table td.rowlabel{ background:var(--surface-2); font-weight:700; text-align:left; padding-left:9px; font-family:var(--mono); font-size:11.5px; white-space:nowrap; }
+  .aislacion-row{ border:1px solid var(--border); border-radius:12px; padding:12px 13px; margin-bottom:10px; background:var(--surface-2); }
+  .aislacion-row:last-child{ margin-bottom:0; }
+  .aislacion-row-label{ font-family:var(--mono); font-weight:800; font-size:13.5px; color:var(--text); margin-bottom:9px; }
+  .aislacion-pruebas{ display:grid; gap:10px; grid-template-columns:1fr; }
+  @media (min-width:520px){ .aislacion-pruebas{ grid-template-columns:1fr 1fr; } }
+  .prueba-block{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:9px 10px; }
+  .prueba-tag{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--accent-strong); font-weight:800; margin-bottom:7px; }
+  .prueba-grid{ display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+  .mf{ display:flex; flex-direction:column; gap:3px; }
+  .mf label{ font-size:10px; color:var(--text-faint); font-family:var(--mono); text-transform:uppercase; letter-spacing:.03em; }
+  .mf input{ min-height:38px; padding:6px 8px; font-size:13.5px; border-radius:7px; }
   .conclusion-radios{ display:flex; gap:16px; flex-wrap:wrap; }
   .conclusion-radios label{ display:flex; align-items:center; gap:7px; font-size:13.5px; font-family:var(--sans); }
   .conclusion-radios input{ width:18px; height:18px; accent-color:var(--accent); }
@@ -380,7 +385,38 @@
         <div class="field"><label>C.O.T.</label><input type="text" id="f_cot" placeholder="Opcional"></div>
         <div class="field"><label>Código equipo</label><input type="text" id="f_codigo" placeholder="4B SP1"></div>
         <div class="field"><label>Fecha</label><input type="date" id="f_fecha"></div>
-        <div class="field span2"><label>Cliente</label><input type="text" id="f_cliente" placeholder="CERVECERA CCU CHILE LTDA"></div>
+        <div class="field span2"><label>Cliente</label>
+          <input type="text" id="f_cliente" placeholder="CERVECERA CCU CHILE LTDA" list="clientesList" autocomplete="off">
+          <datalist id="clientesList">
+            <option value="CCU SANTIAGO"></option>
+            <option value="MINERA GOLDFIELDS"></option>
+            <option value="SOPROLE"></option>
+            <option value="INDURA"></option>
+            <option value="ECUSA VESPUCIO"></option>
+            <option value="ANDINA"></option>
+            <option value="EVERCRISP"></option>
+            <option value="ECUSA"></option>
+            <option value="VIÑA CONCHA Y TORO"></option>
+            <option value="ICB"></option>
+            <option value="WATTS OSORNO"></option>
+            <option value="KROSS"></option>
+            <option value="WATTS LONQUEN"></option>
+            <option value="CIRCULAR"></option>
+            <option value="SURLAT"></option>
+            <option value="CAMILO FERRON"></option>
+            <option value="CERVECERIA KUNSTMANN"></option>
+            <option value="CPW"></option>
+            <option value="RUBERMIX"></option>
+            <option value="BRAUN MEDICAL"></option>
+            <option value="EMBONOR CON CON"></option>
+            <option value="ENVASES CENTRAL"></option>
+            <option value="NESTLE MAIPU"></option>
+            <option value="PLASCO"></option>
+            <option value="EASA"></option>
+            <option value="TECNOELECTRICA VALPARAISO"></option>
+            <option value="VIÑA SAN PEDRO TARAPACA"></option>
+          </datalist>
+        </div>
         <div class="field"><label>Guía de despacho</label><input type="text" id="f_guia" placeholder="N°"></div>
         <div class="field"><label>Técnico / preparado por</label><input type="text" id="f_tecnico" placeholder="Nombre"></div>
         <div class="field span2"><label>Diagnóstico inicial / uso</label><input type="text" id="f_diagnostico" placeholder="Ej: mantención preventiva, motor quemado..."></div>
@@ -460,7 +496,7 @@
           <div class="field"><label>Prueba de continuidad</label><input type="text" id="e_continuidad"></div>
         </div>
         <div class="subhead">Tabla de datos aislación</div>
-        <div class="mini-table-wrap"><div id="aislacionTable"></div></div>
+        <div id="aislacionTable"></div>
         <div class="field"><label>Observación aislación</label><input type="text" id="e_obsAislacion"></div>
 
         <div class="subhead">Medición de resistencia (Ω)</div>
@@ -488,7 +524,7 @@
         <div class="field"><label>Observación bobinado</label><input type="text" id="e_obsBobinado"></div>
 
         <div class="subhead">Estado de placa de bornes (aislación)</div>
-        <div class="mini-table-wrap"><div id="placaBornesTable"></div></div>
+        <div id="placaBornesTable"></div>
         <div class="subhead">Conclusión placa de borne</div>
         <div class="conclusion-radios">
           <label><input type="radio" name="e_concPlaca" value="Bueno"> Bueno</label>
@@ -765,38 +801,41 @@ function toggleElectrica(checked){ document.getElementById('electricaBlock').sty
 
 function renderAislacionTable(){
   const el = document.getElementById('aislacionTable');
-  el.innerHTML = `<table class="mini-table">
-    <tr><th></th><th>KΩ</th><th>MΩ</th><th>GΩ</th><th>V.prueba 1</th><th>KΩ</th><th>MΩ</th><th>GΩ</th><th>V.prueba 2</th></tr>
-    ${state.aislacion.map((r,i) => `<tr>
-      <td class="rowlabel">${r.label}</td>
-      <td><input value="${r.kOhm1}" oninput="updateAislacion(${i},'kOhm1',this.value)"></td>
-      <td><input value="${r.mOhm1}" oninput="updateAislacion(${i},'mOhm1',this.value)"></td>
-      <td><input value="${r.gOhm1}" oninput="updateAislacion(${i},'gOhm1',this.value)"></td>
-      <td><input value="${r.voltaje1}" oninput="updateAislacion(${i},'voltaje1',this.value)"></td>
-      <td><input value="${r.kOhm2}" oninput="updateAislacion(${i},'kOhm2',this.value)"></td>
-      <td><input value="${r.mOhm2}" oninput="updateAislacion(${i},'mOhm2',this.value)"></td>
-      <td><input value="${r.gOhm2}" oninput="updateAislacion(${i},'gOhm2',this.value)"></td>
-      <td><input value="${r.voltaje2}" oninput="updateAislacion(${i},'voltaje2',this.value)"></td>
-    </tr>`).join('')}
-  </table>`;
+  const pruebaBlock = (i, r, n) => `
+    <div class="prueba-block">
+      <div class="prueba-tag">Prueba ${n}</div>
+      <div class="prueba-grid">
+        <div class="mf"><label>KΩ</label><input value="${r['kOhm'+n]}" oninput="updateAislacion(${i},'kOhm${n}',this.value)"></div>
+        <div class="mf"><label>MΩ</label><input value="${r['mOhm'+n]}" oninput="updateAislacion(${i},'mOhm${n}',this.value)"></div>
+        <div class="mf"><label>GΩ</label><input value="${r['gOhm'+n]}" oninput="updateAislacion(${i},'gOhm${n}',this.value)"></div>
+        <div class="mf"><label>Voltaje</label><input value="${r['voltaje'+n]}" oninput="updateAislacion(${i},'voltaje${n}',this.value)"></div>
+      </div>
+    </div>`;
+  el.innerHTML = state.aislacion.map((r,i) => `
+    <div class="aislacion-row">
+      <div class="aislacion-row-label">${r.label}</div>
+      <div class="aislacion-pruebas">${pruebaBlock(i,r,1)}${pruebaBlock(i,r,2)}</div>
+    </div>`).join('');
 }
 function updateAislacion(i,key,val){ state.aislacion[i][key] = val; }
 renderAislacionTable();
 
 function renderPlacaBornesTable(){
   const el = document.getElementById('placaBornesTable');
-  el.innerHTML = `<table class="mini-table">
-    <tr><th></th><th>MΩ</th><th>GΩ</th><th>V.prueba 1</th><th>MΩ</th><th>GΩ</th><th>V.prueba 2</th></tr>
-    ${state.placaBornes.map((r,i) => `<tr>
-      <td class="rowlabel">${r.label}</td>
-      <td><input value="${r.mOhm1}" oninput="updatePlaca(${i},'mOhm1',this.value)"></td>
-      <td><input value="${r.gOhm1}" oninput="updatePlaca(${i},'gOhm1',this.value)"></td>
-      <td><input value="${r.voltaje1}" oninput="updatePlaca(${i},'voltaje1',this.value)"></td>
-      <td><input value="${r.mOhm2}" oninput="updatePlaca(${i},'mOhm2',this.value)"></td>
-      <td><input value="${r.gOhm2}" oninput="updatePlaca(${i},'gOhm2',this.value)"></td>
-      <td><input value="${r.voltaje2}" oninput="updatePlaca(${i},'voltaje2',this.value)"></td>
-    </tr>`).join('')}
-  </table>`;
+  const pruebaBlock = (i, r, n) => `
+    <div class="prueba-block">
+      <div class="prueba-tag">Prueba ${n}</div>
+      <div class="prueba-grid">
+        <div class="mf"><label>MΩ</label><input value="${r['mOhm'+n]}" oninput="updatePlaca(${i},'mOhm${n}',this.value)"></div>
+        <div class="mf"><label>GΩ</label><input value="${r['gOhm'+n]}" oninput="updatePlaca(${i},'gOhm${n}',this.value)"></div>
+        <div class="mf"><label>Voltaje</label><input value="${r['voltaje'+n]}" oninput="updatePlaca(${i},'voltaje${n}',this.value)"></div>
+      </div>
+    </div>`;
+  el.innerHTML = state.placaBornes.map((r,i) => `
+    <div class="aislacion-row">
+      <div class="aislacion-row-label">${r.label}</div>
+      <div class="aislacion-pruebas">${pruebaBlock(i,r,1)}${pruebaBlock(i,r,2)}</div>
+    </div>`).join('');
 }
 function updatePlaca(i,key,val){ state.placaBornes[i][key] = val; }
 renderPlacaBornesTable();
