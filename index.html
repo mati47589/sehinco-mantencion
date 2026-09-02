@@ -590,7 +590,7 @@ const COMPONENT_FIELDS_TEMPLATE = () => ({
   nombre: '', equipo:'', uso:'', codigoEquipo:'', marca:'', modelo:'', serie:'',
   potencia:'', corriente:'', voltaje:'', frecuencia:'', rpm:'', acoplamiento:'',
   rodamiento:'', retenes:'', selloMecanico:'', impulsor:'', diamImpulsor:'',
-  selloCuerpoTipo:'', selloCuerpoValor:'', medidaTuerca:'',
+  selloCuerpoEmpaquetadura:'', selloCuerpoOring:'', medidaTuerca:'',
   diamSuccion:'', diamDescarga:'', altura:'', lubricante:'', cantLubricante:'',
   motorQuemado:false, ventiladorDañado:false, encamizado:false, encamizadoValor:'', observacion:''
 });
@@ -702,11 +702,11 @@ function renderCompPanes(){
       </div>
       <div class="field" style="margin-top:4px;">
         <label>Sello cuerpo BBA</label>
-        <div class="radio-row">
-          <label><input type="radio" name="selloCuerpo${i}" value="Empaquetadura" ${c.selloCuerpoTipo==='Empaquetadura'?'checked':''} onchange="updateComp(${i},'selloCuerpoTipo','Empaquetadura')"> Empaquetadura</label>
-          <label><input type="radio" name="selloCuerpo${i}" value="Oring" ${c.selloCuerpoTipo==='Oring'?'checked':''} onchange="updateComp(${i},'selloCuerpoTipo','Oring')"> O'Ring N°</label>
+        <div class="grid2" style="margin-top:6px;">
+          <div class="field"><label>Empaquetadura</label><input type="text" value="${(c.selloCuerpoEmpaquetadura||'').replace(/"/g,'&quot;')}" oninput="updateComp(${i},'selloCuerpoEmpaquetadura',this.value)" placeholder="Ej: DIN 70, DIN 50"></div>
+          <div class="field"><label>O'Ring N°</label><input type="text" value="${(c.selloCuerpoOring||'').replace(/"/g,'&quot;')}" oninput="updateComp(${i},'selloCuerpoOring',this.value)" placeholder="Ej: 2-449"></div>
         </div>
-        <input type="text" style="margin-top:8px;" value="${(c.selloCuerpoValor||'').replace(/"/g,'&quot;')}" oninput="updateComp(${i},'selloCuerpoValor',this.value)" placeholder="valor / número">
+        <div class="hint">Puedes completar ambos si el equipo lleva los dos.</div>
       </div>
     </fieldset>
     <fieldset>
@@ -932,7 +932,7 @@ async function saveRecord(){
         marca: c.marca, modelo: c.modelo, serie: c.serie, potencia: c.potencia, corriente: c.corriente,
         voltaje: c.voltaje, frecuencia: c.frecuencia, rpm: c.rpm, acoplamiento: c.acoplamiento,
         rodamiento: c.rodamiento, retenes: c.retenes, sello_mecanico: c.selloMecanico, impulsor: c.impulsor,
-        diam_impulsor: c.diamImpulsor, sello_cuerpo_tipo: c.selloCuerpoTipo, sello_cuerpo_valor: c.selloCuerpoValor,
+        diam_impulsor: c.diamImpulsor, sello_cuerpo_empaquetadura: c.selloCuerpoEmpaquetadura, sello_cuerpo_oring: c.selloCuerpoOring,
         medida_tuerca: c.medidaTuerca, diam_succion: c.diamSuccion, diam_descarga: c.diamDescarga, altura: c.altura,
         lubricante: c.lubricante, cant_lubricante: c.cantLubricante, motor_quemado: c.motorQuemado,
         ventilador_danado: c.ventiladorDañado, encamizado: c.encamizado, encamizado_valor: c.encamizadoValor,
@@ -1028,7 +1028,9 @@ function mapFromSupabase(row){
       serie: c.serie, potencia: c.potencia, corriente: c.corriente, voltaje: c.voltaje, frecuencia: c.frecuencia,
       rpm: c.rpm, acoplamiento: c.acoplamiento, rodamiento: c.rodamiento, retenes: c.retenes,
       selloMecanico: c.sello_mecanico, impulsor: c.impulsor, diamImpulsor: c.diam_impulsor,
-      selloCuerpoTipo: c.sello_cuerpo_tipo, selloCuerpoValor: c.sello_cuerpo_valor, medidaTuerca: c.medida_tuerca,
+      selloCuerpoEmpaquetadura: c.sello_cuerpo_empaquetadura || (c.sello_cuerpo_tipo === 'Empaquetadura' ? c.sello_cuerpo_valor : '') || '',
+      selloCuerpoOring: c.sello_cuerpo_oring || (c.sello_cuerpo_tipo === 'Oring' ? c.sello_cuerpo_valor : '') || '',
+      medidaTuerca: c.medida_tuerca,
       diamSuccion: c.diam_succion, diamDescarga: c.diam_descarga, altura: c.altura, lubricante: c.lubricante,
       cantLubricante: c.cant_lubricante, motorQuemado: c.motor_quemado, ventiladorDañado: c.ventilador_danado,
       encamizado: c.encamizado, encamizadoValor: c.encamizado_valor, observacion: c.observacion
@@ -1188,6 +1190,7 @@ function pageDatosIngreso(rec){
   const comps = rec.componentes || [];
   const c0 = comps[0] || {}, c1 = comps[1] || {};
   const compRow = (label, key) => `<tr><td class="lbl">${label}</td><td>${c0[key]||''}</td><td>${c1[key]||''}</td></tr>`;
+  const selloCuerpoTexto = (c) => [c.selloCuerpoEmpaquetadura ? `Empaq: ${c.selloCuerpoEmpaquetadura}` : '', c.selloCuerpoOring ? `O'Ring: ${c.selloCuerpoOring}` : ''].filter(Boolean).join(' / ');
   return `<div class="doc-page">
     ${docHeader(rec,'DATOS DE INGRESO EQUIPO A MANTENCION')}
     <table class="doc-table">
@@ -1214,7 +1217,7 @@ function pageDatosIngreso(rec){
       ${compRow('SELLO MEC.','selloMecanico')}
       ${compRow('IMPULSOR','impulsor')}
       ${compRow('DIAMETRO IMPULSOR','diamImpulsor')}
-      ${compRow('SELLO CUERPO BBA.','selloCuerpoValor')}
+      <tr><td class="lbl">SELLO CUERPO BBA.</td><td>${selloCuerpoTexto(c0)}</td><td>${selloCuerpoTexto(c1)}</td></tr>
       ${compRow('MEDIDA TUERCA IMPULSOR','medidaTuerca')}
       ${compRow('DIAM. SUCCION','diamSuccion')}
       ${compRow('DIAM. DESCARGA','diamDescarga')}
@@ -1317,7 +1320,7 @@ async function exportCSV(){
   const recs = await listAllRecords();
   if(recs.length === 0){ showToast('No hay registros para exportar', 'error'); return; }
   const cols = ['ot','cot','codigoEquipo','fecha','cliente','guia','tecnico','diagnostico','obsGeneral'];
-  const compCols = ['nombre','equipo','uso','codigoEquipo','marca','modelo','serie','potencia','corriente','voltaje','frecuencia','rpm','acoplamiento','rodamiento','retenes','selloMecanico','impulsor','diamImpulsor','selloCuerpoTipo','selloCuerpoValor','medidaTuerca','diamSuccion','diamDescarga','altura','lubricante','cantLubricante','observacion'];
+  const compCols = ['nombre','equipo','uso','codigoEquipo','marca','modelo','serie','potencia','corriente','voltaje','frecuencia','rpm','acoplamiento','rodamiento','retenes','selloMecanico','impulsor','diamImpulsor','selloCuerpoEmpaquetadura','selloCuerpoOring','medidaTuerca','diamSuccion','diamDescarga','altura','lubricante','cantLubricante','observacion'];
   const maxComp = Math.max(1, ...recs.map(r=>r.componentes.length));
   const header = [...cols, ...Array.from({length:maxComp}).flatMap((_,i)=>compCols.map(c=>`comp${i+1}_${c}`))];
   const rows = recs.map(r => {
@@ -1558,6 +1561,25 @@ function actualizarEstadoConexion(){
 window.addEventListener('online', actualizarEstadoConexion);
 window.addEventListener('offline', actualizarEstadoConexion);
 actualizarEstadoConexion();
+
+/* ============================================================
+/* ============================================================
+   TEXTO EN MAYÚSCULAS AUTOMÁTICO
+   Convierte lo que se escribe en cualquier campo de texto o área
+   de texto a mayúsculas, igual que los formatos oficiales impresos.
+   No modifica datos ya guardados hasta que se vuelvan a editar.
+   ============================================================ */
+document.addEventListener('input', (e) => {
+  const el = e.target;
+  const esTexto = el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && el.type === 'text');
+  if(!esTexto) return;
+  const mayus = el.value.toUpperCase();
+  if(mayus === el.value) return;
+  const inicio = el.selectionStart, fin = el.selectionEnd;
+  el.value = mayus;
+  // Restaurar la posición del cursor para que no salte al final al escribir en medio del texto
+  if(inicio !== null) el.setSelectionRange(inicio, fin);
+});
 
 /* ============================================================
    REGISTRO DEL SERVICE WORKER (PWA instalable)
