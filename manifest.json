@@ -1,0 +1,15 @@
+{
+  "name": "SEHINCO — Hoja de Ingreso Digital",
+  "short_name": "Ingreso Sehinco",
+  "description": "Formulario digital de ingreso de equipo a mantención — SEHINCO LTDA.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F2F3F5",
+  "theme_color": "#F2F3F5",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
