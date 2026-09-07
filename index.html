@@ -106,7 +106,6 @@
     font-family:var(--sans); font-weight:700; font-size:13px; cursor:pointer; transition:.15s;
   }
   .comp-switch button.active{ background:var(--accent); color:var(--on-accent); box-shadow:var(--shadow-sm); }
-  .comp-name-input{ font-family:var(--sans); font-weight:700; font-size:16px; }
   fieldset{ border:1px solid var(--border); border-radius:12px; padding:12px 13px 14px; margin:0; }
   legend{ font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; color:var(--accent-strong); padding:0 7px; font-weight:800; }
   .radio-row{ display:flex; gap:18px; padding-top:3px; flex-wrap:wrap; }
@@ -669,7 +668,7 @@ let state = {
     {label:'EQUIPO PROBADO Y FUNCIONANDO', checked:false},
     {label:'LIMPIEZA FINAL REALIZADA', checked:false},
   ],
-  componentes: [ {...COMPONENT_FIELDS_TEMPLATE(), nombre:'Motor'}, {...COMPONENT_FIELDS_TEMPLATE(), nombre:'Bomba'} ],
+  componentes: [ {...COMPONENT_FIELDS_TEMPLATE(), nombre:'MOTOR'}, {...COMPONENT_FIELDS_TEMPLATE(), nombre:'BOMBA'} ],
   activeComp: 0,
   repuestos: [],
   aislacion: ['L1','L2','L3','L1 - L2','L1 - L3','L2 - L3'].map(label => ({label, kOhm1:'', mOhm1:'', gOhm1:'1 T', voltaje1:'', kOhm2:'', mOhm2:'', gOhm2:'1 T', voltaje2:''}))
@@ -722,10 +721,6 @@ function renderCompPanes(){
   const i = state.activeComp;
   const c = state.componentes[i];
   el.innerHTML = `
-    <div class="field">
-      <label>Nombre del componente</label>
-      <input class="comp-name-input" type="text" value="${c.nombre}" oninput="updateComp(${i},'nombre',this.value); renderCompSwitch();" placeholder="Motor / Bomba / Ventilador...">
-    </div>
     <fieldset>
       <legend>Identificación</legend>
       <div class="grid2">
@@ -768,16 +763,6 @@ function renderCompPanes(){
           <div class="field"><label>O'Ring N°</label><input type="text" value="${(c.selloCuerpoOring||'').replace(/"/g,'&quot;')}" oninput="updateComp(${i},'selloCuerpoOring',this.value)" placeholder="Ej: 2-449"></div>
         </div>
         <div class="hint">Puedes completar ambos si el equipo lleva los dos.</div>
-      </div>
-    </fieldset>
-    <fieldset>
-      <legend>Bomba (si aplica)</legend>
-      <div class="grid2">
-        ${fieldRow('Diám. succión', i, 'diamSuccion')}
-        ${fieldRow('Diám. descarga', i, 'diamDescarga')}
-        ${fieldRow('Altura', i, 'altura')}
-        ${fieldRow('Lubricante', i, 'lubricante')}
-        ${fieldRow('Cant. lubricante', i, 'cantLubricante')}
       </div>
     </fieldset>
     <fieldset>
@@ -1018,7 +1003,7 @@ function resetForm(){
   limpiarErroresValidacion();
   state.checkIn = [{label:'EQUIPO COMPLETO (SIN PIEZAS FALTANTES)', checked:false},{label:'SIN DAÑOS VISIBLES EXTERNOS', checked:false},{label:'PLACA DE DATOS LEGIBLE', checked:false}];
   state.checkOut = [{label:'EQUIPO PROBADO Y FUNCIONANDO', checked:false},{label:'LIMPIEZA FINAL REALIZADA', checked:false}];
-  state.componentes = [ {...COMPONENT_FIELDS_TEMPLATE(), nombre:'Motor'}, {...COMPONENT_FIELDS_TEMPLATE(), nombre:'Bomba'} ];
+  state.componentes = [ {...COMPONENT_FIELDS_TEMPLATE(), nombre:'MOTOR'}, {...COMPONENT_FIELDS_TEMPLATE(), nombre:'BOMBA'} ];
   state.activeComp = 0;
   state.repuestos = [];
   state.aislacion = ['L1','L2','L3','L1 - L2','L1 - L3','L2 - L3'].map(label => ({label, kOhm1:'', mOhm1:'', gOhm1:'1 T', voltaje1:'', kOhm2:'', mOhm2:'', gOhm2:'1 T', voltaje2:''}));
@@ -1150,6 +1135,9 @@ async function editRecord(id){
   state.checkIn = rec.checkIn || [];
   state.checkOut = rec.checkOut || [];
   state.componentes = rec.componentes.length ? rec.componentes : [COMPONENT_FIELDS_TEMPLATE(), COMPONENT_FIELDS_TEMPLATE()];
+  // El nombre del componente ahora es fijo (MOTOR / BOMBA), aunque un registro viejo tenga otro nombre guardado
+  if(state.componentes[0]) state.componentes[0].nombre = 'MOTOR';
+  if(state.componentes[1]) state.componentes[1].nombre = 'BOMBA';
   state.activeComp = 0;
   state.repuestos = rec.repuestos || [];
   document.getElementById('f_descripcionTrabajo').value = rec.descripcionTrabajo||'';
@@ -1260,11 +1248,6 @@ function pageDatosIngreso(rec){
       ${compRow('DIAMETRO IMPULSOR','diamImpulsor')}
       <tr><td class="lbl">SELLO CUERPO BBA.</td><td>${selloCuerpoTexto(c0)}</td><td>${selloCuerpoTexto(c1)}</td></tr>
       ${compRow('MEDIDA TUERCA IMPULSOR','medidaTuerca')}
-      ${compRow('DIAM. SUCCION','diamSuccion')}
-      ${compRow('DIAM. DESCARGA','diamDescarga')}
-      ${compRow('ALTURA','altura')}
-      ${compRow('LUBRICANTE','lubricante')}
-      ${compRow('CANT. LUBRIC.','cantLubricante')}
     </table>
     ${docFooter()}
   </div>`;
@@ -1359,7 +1342,7 @@ async function exportCSV(){
   const recs = await listAllRecords();
   if(recs.length === 0){ showToast('No hay registros para exportar', 'error'); return; }
   const cols = ['ot','cot','codigoEquipo','fecha','cliente','guia','tecnico','diagnostico','obsGeneral'];
-  const compCols = ['nombre','equipo','uso','codigoEquipo','marca','modelo','serie','potencia','corriente','voltaje','frecuencia','rpm','acoplamiento','rodamiento','retenes','selloMecanico','impulsor','diamImpulsor','selloCuerpoEmpaquetadura','selloCuerpoOring','medidaTuerca','diamSuccion','diamDescarga','altura','lubricante','cantLubricante','observacion'];
+  const compCols = ['nombre','equipo','uso','codigoEquipo','marca','modelo','serie','potencia','corriente','rpm','rodamiento','retenes','selloMecanico','impulsor','diamImpulsor','selloCuerpoEmpaquetadura','selloCuerpoOring','medidaTuerca','observacion'];
   const maxComp = Math.max(1, ...recs.map(r=>r.componentes.length));
   const header = [...cols, ...Array.from({length:maxComp}).flatMap((_,i)=>compCols.map(c=>`comp${i+1}_${c}`))];
   const rows = recs.map(r => {
