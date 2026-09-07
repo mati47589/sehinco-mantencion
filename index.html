@@ -786,7 +786,11 @@ function renderCompPanes(){
     </fieldset>
   `;
 }
-function updateComp(i, key, val){ state.componentes[i][key] = val; }
+function updateComp(i, key, val){
+  state.componentes[i][key] = val;
+  // El nombre del Motor (componente 0) define la etiqueta de los dos primeros casilleros de fotos
+  if(i === 0 && key === 'equipo') renderFotosList(currentFotos);
+}
 renderCompSwitch();
 renderCompPanes();
 
@@ -1371,28 +1375,34 @@ document.getElementById('btnExport').addEventListener('click', exportCSV);
 /* ============================================================
    FOTOS — casilleros predefinidos + adicionales
    ============================================================ */
-const FOTO_SLOTS = [
-  {key:'motobba_antes', label:'Motobomba — Antes'},
-  {key:'motobba_despues', label:'Motobomba — Después'},
-  {key:'caja_antes', label:'Caja eléctrica — Antes'},
-  {key:'caja_despues', label:'Caja eléctrica — Después'},
-  {key:'eje_antes', label:'Eje / Rotor — Antes'},
-  {key:'eje_despues', label:'Eje / Rotor — Después'},
-  {key:'bobinado_antes', label:'Bobinado — Antes'},
-  {key:'bobinado_despues', label:'Bobinado — Después'},
-  {key:'tapas_antes', label:'Tapas motor — Antes'},
-  {key:'tapas_despues', label:'Tapas motor — Después'},
-  {key:'placa_motor', label:'Placa motor'},
-  {key:'ot_grabado', label:'OT grabado en equipo'}
-];
+function getFotoSlots(){
+  const equipoNombre = ((state.componentes[0] && state.componentes[0].equipo) || '').trim() || 'EQUIPO';
+  return [
+    {key:'motobba_antes', label:`${equipoNombre} — Antes`},
+    {key:'motobba_despues', label:`${equipoNombre} — Después`},
+    {key:'caja_antes', label:'Caja eléctrica — Antes'},
+    {key:'caja_despues', label:'Caja eléctrica — Después'},
+    {key:'eje_antes', label:'Eje / Rotor — Antes'},
+    {key:'eje_despues', label:'Eje / Rotor — Después'},
+    {key:'bobinado_antes', label:'Bobinado — Antes'},
+    {key:'bobinado_despues', label:'Bobinado — Después'},
+    {key:'tapas_antes', label:'Tapas motor — Antes'},
+    {key:'tapas_despues', label:'Tapas motor — Después'},
+    {key:'placa_motor', label:'Placa motor'},
+    {key:'ot_grabado', label:'OT grabado en equipo'}
+  ];
+}
 
 let currentFotos = [];
 
 function renderFotosList(fotos){
   currentFotos = fotos || [];
+  const slots = getFotoSlots();
   const slotsEl = document.getElementById('fotoSlots');
-  slotsEl.innerHTML = FOTO_SLOTS.map(slot => {
-    const found = currentFotos.find(f => f.etiqueta === slot.label);
+  slotsEl.innerHTML = slots.map((slot, idx) => {
+    // Buscamos por posición (orden) primero, para que el casillero no "pierda" su foto
+    // si el nombre del equipo cambia después de haber subido la imagen.
+    const found = currentFotos.find(f => f.orden === idx + 1) || currentFotos.find(f => f.etiqueta === slot.label);
     const inner = found
       ? (() => {
           const url = sb.storage.from(CONFIG.STORAGE_BUCKET).getPublicUrl(found.storage_path).data.publicUrl;
@@ -1405,7 +1415,7 @@ function renderFotosList(fotos){
     </div>`;
   }).join('');
 
-  const extras = currentFotos.filter(f => !FOTO_SLOTS.some(s => s.label === f.etiqueta));
+  const extras = currentFotos.filter(f => !slots.some((s, idx) => f.orden === idx + 1 || f.etiqueta === s.label));
   const extraEl = document.getElementById('fotosExtra');
   extraEl.innerHTML = extras.length === 0
     ? '<div class="empty-hint">Sin fotos adicionales.</div>'
@@ -1497,7 +1507,7 @@ async function subirFotoSlot(key, label, file){
   const wrap = document.getElementById('slotwrap_' + key);
   if(wrap){ wrap.insertAdjacentHTML('beforeend', `<div class="uploading"><span class="spinner"></span>Subiendo...</div>`); }
   try{
-    const slotIndex = FOTO_SLOTS.findIndex(s => s.key === key);
+    const slotIndex = getFotoSlots().findIndex(s => s.key === key);
     const orden = slotIndex >= 0 ? slotIndex + 1 : (currentFotos.length + 1);
     const existing = currentFotos.find(f => f.etiqueta === label);
     if(existing){ await eliminarFotoSilencioso(existing.id, existing.storage_path); }
