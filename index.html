@@ -663,7 +663,7 @@ jumpSections.forEach(s => spy.observe(s));
 const COMPONENT_FIELDS_TEMPLATE = () => ({
   nombre: '', equipo:'', uso:'', codigoEquipo:'', marca:'', modelo:'', serie:'',
   potencia:'', corriente:'', voltaje:'', frecuencia:'', rpm:'', acoplamiento:'',
-  rodamiento:'', retenes:'', selloMecanico:'', impulsor:'', diamImpulsor:'',
+  rodamiento:'', rodamientoReductor:'', retenes:'', retenesReductor:'', selloMecanico:'', impulsor:'', diamImpulsor:'',
   selloCuerpoEmpaquetadura:'', selloCuerpoOring:'', medidaTuerca:'',
   diamSuccion:'', diamDescarga:'', altura:'', lubricante:'', cantLubricante:'',
   motorQuemado:false, ventiladorDañado:false, encamizado:false, encamizadoValor:'', observacion:''
@@ -755,7 +755,9 @@ function renderCompPanes(){
       <legend>Mecánico</legend>
       <div class="grid2">
         ${fieldRow('N° rodamiento', i, 'rodamiento', {ph:'6206 2RSC3 - 6206 F'})}
+        ${fieldRow('Rod. reductor', i, 'rodamientoReductor')}
         ${fieldRow('Retenes', i, 'retenes', {ph:'30X40X4'})}
+        ${fieldRow('Retenes reductor', i, 'retenesReductor')}
         ${fieldRow('Sello mecánico', i, 'selloMecanico')}
         ${fieldRow('Diámetro del impulsor', i, 'diamImpulsor')}
         ${fieldRow('Medida tuerca impulsor', i, 'medidaTuerca')}
@@ -972,7 +974,7 @@ async function saveRecord(){
         ingreso_id: ingresoId, nombre: c.nombre, equipo: c.equipo, uso: c.uso, codigo_equipo: c.codigoEquipo,
         marca: c.marca, modelo: c.modelo, serie: c.serie, potencia: c.potencia, corriente: c.corriente,
         voltaje: c.voltaje, frecuencia: c.frecuencia, rpm: c.rpm, acoplamiento: c.acoplamiento,
-        rodamiento: c.rodamiento, retenes: c.retenes, sello_mecanico: c.selloMecanico, impulsor: c.impulsor,
+        rodamiento: c.rodamiento, rod_reductor: c.rodamientoReductor, retenes: c.retenes, retenes_reductor: c.retenesReductor, sello_mecanico: c.selloMecanico, impulsor: c.impulsor,
         diam_impulsor: c.diamImpulsor, sello_cuerpo_empaquetadura: c.selloCuerpoEmpaquetadura, sello_cuerpo_oring: c.selloCuerpoOring,
         medida_tuerca: c.medidaTuerca, diam_succion: c.diamSuccion, diam_descarga: c.diamDescarga, altura: c.altura,
         lubricante: c.lubricante, cant_lubricante: c.cantLubricante, motor_quemado: c.motorQuemado,
@@ -1065,7 +1067,7 @@ function mapFromSupabase(row){
     componentes: (row.componentes||[]).map(c => ({
       nombre: c.nombre, equipo: c.equipo, uso: c.uso, codigoEquipo: c.codigo_equipo, marca: c.marca, modelo: c.modelo,
       serie: c.serie, potencia: c.potencia, corriente: c.corriente, voltaje: c.voltaje, frecuencia: c.frecuencia,
-      rpm: c.rpm, acoplamiento: c.acoplamiento, rodamiento: c.rodamiento, retenes: c.retenes,
+      rpm: c.rpm, acoplamiento: c.acoplamiento, rodamiento: c.rodamiento, rodamientoReductor: c.rod_reductor, retenes: c.retenes, retenesReductor: c.retenes_reductor,
       selloMecanico: c.sello_mecanico, impulsor: c.impulsor, diamImpulsor: c.diam_impulsor,
       selloCuerpoEmpaquetadura: c.sello_cuerpo_empaquetadura || (c.sello_cuerpo_tipo === 'Empaquetadura' ? c.sello_cuerpo_valor : '') || '',
       selloCuerpoOring: c.sello_cuerpo_oring || (c.sello_cuerpo_tipo === 'Oring' ? c.sello_cuerpo_valor : '') || '',
@@ -1245,7 +1247,9 @@ function pageDatosIngreso(rec){
       ${compRow('RPM','rpm')}
       ${compRow('TIPO ACOPLAMIENTO','acoplamiento')}
       ${compRow('RODAMIENTO','rodamiento')}
+      ${compRow('ROD. REDUCTOR','rodamientoReductor')}
       ${compRow('RETENES','retenes')}
+      ${compRow('RETENES REDUCTOR','retenesReductor')}
       ${compRow('SELLO MEC.','selloMecanico')}
       ${compRow('IMPULSOR','impulsor')}
       ${compRow('DIAMETRO IMPULSOR','diamImpulsor')}
@@ -1346,7 +1350,7 @@ async function exportCSV(){
   const recs = await listAllRecords();
   if(recs.length === 0){ showToast('No hay registros para exportar', 'error'); return; }
   const cols = ['ot','cot','codigoEquipo','fecha','cliente','guia','tecnico','diagnostico','obsGeneral'];
-  const compCols = ['nombre','equipo','uso','codigoEquipo','marca','modelo','serie','potencia','corriente','rpm','rodamiento','retenes','selloMecanico','impulsor','diamImpulsor','selloCuerpoEmpaquetadura','selloCuerpoOring','medidaTuerca','observacion'];
+  const compCols = ['nombre','equipo','uso','codigoEquipo','marca','modelo','serie','potencia','corriente','rpm','rodamiento','rodamientoReductor','retenes','retenesReductor','selloMecanico','impulsor','diamImpulsor','selloCuerpoEmpaquetadura','selloCuerpoOring','medidaTuerca','observacion'];
   const maxComp = Math.max(1, ...recs.map(r=>r.componentes.length));
   const header = [...cols, ...Array.from({length:maxComp}).flatMap((_,i)=>compCols.map(c=>`comp${i+1}_${c}`))];
   const rows = recs.map(r => {
