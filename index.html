@@ -139,10 +139,6 @@
   .aislacion-row{ border:1px solid var(--border); border-radius:12px; padding:12px 13px; margin-bottom:10px; background:var(--surface-2); }
   .aislacion-row:last-child{ margin-bottom:0; }
   .aislacion-row-label{ font-family:var(--mono); font-weight:800; font-size:13.5px; color:var(--text); margin-bottom:9px; }
-  .aislacion-pruebas{ display:grid; gap:10px; grid-template-columns:1fr; }
-  @media (min-width:520px){ .aislacion-pruebas{ grid-template-columns:1fr 1fr; } }
-  .prueba-block{ background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:9px 10px; }
-  .prueba-tag{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--accent-strong); font-weight:800; margin-bottom:7px; }
   .prueba-grid{ display:grid; grid-template-columns:1fr 1fr; gap:7px; }
   .mf{ display:flex; flex-direction:column; gap:3px; }
   .mf label{ font-size:10px; color:var(--text-faint); font-family:var(--mono); text-transform:uppercase; letter-spacing:.03em; }
@@ -682,7 +678,7 @@ let state = {
   componentes: [ {...COMPONENT_FIELDS_TEMPLATE(), nombre:'MOTOR'}, {...COMPONENT_FIELDS_TEMPLATE(), nombre:'BOMBA'} ],
   activeComp: 0,
   repuestos: [],
-  aislacion: ['L1','L2','L3','L1 - L2','L1 - L3','L2 - L3'].map(label => ({label, kOhm1:'', mOhm1:'', gOhm1:'1 T', voltaje1:'', kOhm2:'', mOhm2:'', gOhm2:'1 T', voltaje2:''}))
+  aislacion: ['L1','L2','L3','L1 - L2','L1 - L3','L2 - L3'].map(label => ({label, kOhm1:'', mOhm1:'', gOhm1:'1 T', voltaje1:''}))
 };
 
 document.getElementById('f_fecha').value = new Date().toISOString().slice(0,10);
@@ -824,20 +820,15 @@ function toggleElectrica(checked){ document.getElementById('electricaBlock').sty
 
 function renderAislacionTable(){
   const el = document.getElementById('aislacionTable');
-  const pruebaBlock = (i, r, n) => `
-    <div class="prueba-block">
-      <div class="prueba-tag">Prueba ${n}</div>
-      <div class="prueba-grid">
-        <div class="mf"><label>KΩ</label><input value="${r['kOhm'+n]}" oninput="updateAislacion(${i},'kOhm${n}',this.value)"></div>
-        <div class="mf"><label>MΩ</label><input value="${r['mOhm'+n]}" oninput="updateAislacion(${i},'mOhm${n}',this.value)"></div>
-        <div class="mf"><label>GΩ</label><input value="${r['gOhm'+n]}" oninput="updateAislacion(${i},'gOhm${n}',this.value)"></div>
-        <div class="mf"><label>Voltaje</label><input value="${r['voltaje'+n]}" oninput="updateAislacion(${i},'voltaje${n}',this.value)"></div>
-      </div>
-    </div>`;
   el.innerHTML = state.aislacion.map((r,i) => `
     <div class="aislacion-row">
       <div class="aislacion-row-label">${r.label}</div>
-      <div class="aislacion-pruebas">${pruebaBlock(i,r,1)}${pruebaBlock(i,r,2)}</div>
+      <div class="prueba-grid">
+        <div class="mf"><label>KΩ</label><input value="${r.kOhm1}" oninput="updateAislacion(${i},'kOhm1',this.value)"></div>
+        <div class="mf"><label>MΩ</label><input value="${r.mOhm1}" oninput="updateAislacion(${i},'mOhm1',this.value)"></div>
+        <div class="mf"><label>GΩ</label><input value="${r.gOhm1}" oninput="updateAislacion(${i},'gOhm1',this.value)"></div>
+        <div class="mf"><label>Voltaje</label><input value="${r.voltaje1}" oninput="updateAislacion(${i},'voltaje1',this.value)"></div>
+      </div>
     </div>`).join('');
 }
 function updateAislacion(i,key,val){ state.aislacion[i][key] = val; }
@@ -1019,7 +1010,7 @@ function resetForm(){
   state.componentes = [ {...COMPONENT_FIELDS_TEMPLATE(), nombre:'MOTOR'}, {...COMPONENT_FIELDS_TEMPLATE(), nombre:'BOMBA'} ];
   state.activeComp = 0;
   state.repuestos = [];
-  state.aislacion = ['L1','L2','L3','L1 - L2','L1 - L3','L2 - L3'].map(label => ({label, kOhm1:'', mOhm1:'', gOhm1:'1 T', voltaje1:'', kOhm2:'', mOhm2:'', gOhm2:'1 T', voltaje2:''}));
+  state.aislacion = ['L1','L2','L3','L1 - L2','L1 - L3','L2 - L3'].map(label => ({label, kOhm1:'', mOhm1:'', gOhm1:'1 T', voltaje1:''}));
   document.getElementById('f_descripcionTrabajo').value='';
   document.getElementById('f_conclusion').value='';
   document.getElementById('f_sugerencia').value='REALIZAR MANTENIMIENTO PREVENTIVO ANUAL';
