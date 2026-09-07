@@ -1262,21 +1262,27 @@ function pageDatosIngreso(rec){
 
 function pageInforme(rec){
   const comps = rec.componentes || [];
+  const c0 = comps[0] || {}, c1 = comps[1] || {};
+  const compRow = (label, key) => `<tr><td class="lbl">${label}</td><td>${c0[key]||''}</td><td>${c1[key]||''}</td></tr>`;
   const repRows = (rec.repuestos||[]).map(r=>`<tr><td>${r.componente}</td><td>${r.descripcion}</td><td style="text-align:center;">${r.cantidad}</td></tr>`).join('');
-  const compBlocks = comps.map(c => `
-    <div class="doc-section-title">${(c.nombre||'COMPONENTE').toUpperCase()}</div>
+  const compTable = `
     <table class="doc-table">
-      ${row('Código equipo', c.codigoEquipo)}${row('Marca', c.marca)}${row('Modelo', c.modelo)}${row('N° Serie', c.serie)}
-      ${row('Potencia', c.potencia)}${row('Velocidad / RPM', c.rpm)}${row('Corriente', c.corriente)}${row('Voltaje', c.voltaje)}
-      ${row('Frecuencia', c.frecuencia)}${row('Sello mecánico', c.selloMecanico)}${row('Acoplamiento', c.acoplamiento)}
-    </table>`).join('');
+      <tr><th>DATOS TECNICOS</th><th>${c0.nombre||'MOTOR'}</th><th>${c1.nombre||'BOMBA'}</th></tr>
+      ${compRow('Código equipo','codigoEquipo')}
+      ${compRow('Marca','marca')}
+      ${compRow('Modelo','modelo')}
+      ${compRow('N° Serie','serie')}
+      ${compRow('Potencia','potencia')}
+      ${compRow('Corriente','corriente')}
+      ${compRow('Velocidad / RPM','rpm')}
+    </table>`;
   return `<div class="doc-page">
     ${docHeader(rec,'INFORME DE MANTENIMIENTO DE EQUIPO')}
     <div class="doc-section-title">DATOS TECNICOS EQUIPO</div>
     <table class="doc-table">
       ${row('Empresa', rec.cliente)}${row('Fecha reparación', fmtDate(rec.fecha))}${row('Uso / diagnóstico', rec.diagnostico)}
     </table>
-    ${compBlocks}
+    ${compTable}
     <div class="doc-section-title">REPUESTOS</div>
     <table class="doc-table"><tr><th>Componente</th><th>Descripción</th><th>Cantidad</th></tr>${repRows || '<tr><td colspan="3" style="text-align:center;color:#777;">Sin repuestos registrados</td></tr>'}</table>
     <div class="doc-section-title">DESCRIPCION DEL TRABAJO</div>
@@ -1294,7 +1300,7 @@ function pageInforme(rec){
 
 function pageElectrica(rec){
   const e = rec.electrica || {};
-  const aisRows = (e.aislacion||[]).map(a => `<tr><td class="lbl" style="width:auto;">${a.label}</td><td>${a.kOhm1}</td><td>${a.mOhm1}</td><td>${a.gOhm1}</td><td>${a.voltaje1}</td><td>${a.kOhm2}</td><td>${a.mOhm2}</td><td>${a.gOhm2}</td><td>${a.voltaje2}</td></tr>`).join('');
+  const aisRows = (e.aislacion||[]).map(a => `<tr><td class="lbl" style="width:auto;">${a.label}</td><td>${a.kOhm1}</td><td>${a.mOhm1}</td><td>${a.gOhm1}</td><td>${a.voltaje1}</td></tr>`).join('');
   const concRow = (label, val) => `<tr><td class="lbl">${label}</td><td style="text-align:center;">${val==='Bueno'?'X':''}</td><td style="text-align:center;">${val==='Regular'?'X':''}</td><td style="text-align:center;">${val==='Malo'?'X':''}</td></tr>`;
   const conexionTexto = e.conexion === 'DELTA' ? '▲ DELTA' : e.conexion === 'MONOFASICO' ? 'MONOFASICO' : '★ ESTRELLA';
   return `<div class="doc-page">
@@ -1305,7 +1311,7 @@ function pageElectrica(rec){
       ${row('CODIGO / N° EQUIPO', (rec.componentes||[])[0]?.codigoEquipo)}${row('MAESTRO ASIGNADO', rec.tecnico)}${row('CONEXION', conexionTexto)}
     </table>
     <div class="doc-section-title">TABLA DE DATOS AISLACION</div>
-    <table class="doc-table"><tr><th></th><th>KΩ</th><th>MΩ</th><th>GΩ</th><th>V.prueba 1</th><th>KΩ</th><th>MΩ</th><th>GΩ</th><th>V.prueba 2</th></tr>${aisRows}</table>
+    <table class="doc-table"><tr><th></th><th>KΩ</th><th>MΩ</th><th>GΩ</th><th>V.prueba 1</th></tr>${aisRows}</table>
     <p style="font-size:10.5px;">NOTA: MEDIR SIN PLACA DE BORNES (TERMINALES) — Observación: ${e.obsAislacion||'—'} — Prueba de continuidad: ${e.continuidad||'—'}</p>
     <div class="doc-section-title">MEDICION DE RESISTENCIA / CORRIENTES (EN VACIO)</div>
     <table class="doc-table">
