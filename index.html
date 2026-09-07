@@ -37,7 +37,7 @@
   /* ================= APP BAR ================= */
   .appbar{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding:16px 18px 14px; }
   .appbar-brand{ display:flex; align-items:center; gap:11px; }
-  .appbar-emblem{ width:38px; height:38px; flex-shrink:0; }
+  .appbar-emblem{ width:40px; height:40px; flex-shrink:0; object-fit:contain; border-radius:8px; }
   .appbar-co b{ display:block; font-size:13px; letter-spacing:.01em; }
   .appbar-co span{ display:block; font-family:var(--mono); font-size:9.5px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.05em; margin-top:1px; }
   .conn-pill{ display:flex; align-items:center; gap:5px; font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--brand); }
@@ -293,6 +293,19 @@
   .combo-option:active{ background:var(--surface-2); }
   .combo-empty{ padding:13px 15px; font-size:13px; color:var(--text-faint); }
 
+  /* ================= CONEXION (DELTA / ESTRELLA / MONOFASICO) ================= */
+  .conexion-choice{ display:flex; gap:8px; }
+  .conexion-opt{
+    flex:1; display:flex; flex-direction:column; align-items:center; gap:5px; padding:12px 6px;
+    border:1.5px solid var(--border-strong); border-radius:12px; background:var(--surface-2); cursor:pointer;
+  }
+  .conexion-opt input{ position:absolute; opacity:0; width:0; height:0; }
+  .conexion-symbol{ font-size:22px; line-height:1; color:var(--text-dim); }
+  .conexion-opt span:last-child{ font-size:12px; font-weight:700; color:var(--text-dim); }
+  .conexion-opt:has(input:checked){ border-color:var(--accent); background:var(--accent-dim); }
+  .conexion-opt:has(input:checked) .conexion-symbol,
+  .conexion-opt:has(input:checked) span:last-child{ color:var(--accent-strong); }
+
   /* ================= TABLET / PANTALLAS GRANDES ================= */
   @media (min-width:720px){
     .container{ max-width:920px; }
@@ -396,14 +409,7 @@
 <!-- ============================================================ APP BAR ============================================================ -->
 <header class="appbar">
   <div class="appbar-brand">
-    <svg class="appbar-emblem" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <circle cx="32" cy="32" r="30" fill="none" stroke="var(--brand)" stroke-width="2.5"/>
-      <circle cx="32" cy="32" r="23" fill="none" stroke="var(--brand)" stroke-width="1"/>
-      <circle cx="32" cy="8" r="3" fill="var(--brand)"/><circle cx="32" cy="56" r="3" fill="var(--brand)"/>
-      <circle cx="8" cy="32" r="3" fill="var(--brand)"/><circle cx="56" cy="32" r="3" fill="var(--brand)"/>
-      <path d="M20 38 L32 20 L44 38 Z" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linejoin="round"/>
-      <circle cx="32" cy="34" r="5" fill="none" stroke="var(--brand)" stroke-width="2"/>
-    </svg>
+    <img class="appbar-emblem" src="logo-sehinco.png" alt="SEHINCO">
     <div class="appbar-co">
       <b>SEHINCO LTDA.</b>
       <span>Hoja de Ingreso Digital</span>
@@ -496,10 +502,15 @@
         <label class="switch"><input type="checkbox" id="f_aplicaElectrica" onchange="toggleElectrica(this.checked)"><span class="track"></span></label>
       </div>
       <div id="electricaBlock" style="display:none;">
-        <div class="grid2">
-          <div class="field"><label>Conexión</label>
-            <select id="e_conexion"><option value="ESTRELLA">Estrella</option><option value="DELTA">Delta</option></select>
+        <div class="field">
+          <label>Conexión</label>
+          <div class="conexion-choice">
+            <label class="conexion-opt"><input type="radio" name="e_conexion" value="DELTA"><span class="conexion-symbol">▲</span><span>Delta</span></label>
+            <label class="conexion-opt"><input type="radio" name="e_conexion" value="ESTRELLA" checked><span class="conexion-symbol">★</span><span>Estrella</span></label>
+            <label class="conexion-opt"><input type="radio" name="e_conexion" value="MONOFASICO"><span class="conexion-symbol">M</span><span>Monofásico</span></label>
           </div>
+        </div>
+        <div class="grid2">
           <div class="field"><label>Prueba de continuidad</label><input type="text" id="e_continuidad"></div>
         </div>
         <div class="subhead">Tabla de datos aislación</div>
@@ -896,7 +907,7 @@ function collectRecord(existingId){
     medidaCorrectiva: document.getElementById('f_medidaCorrectiva').value,
     aplicaElectrica: document.getElementById('f_aplicaElectrica').checked,
     electrica: {
-      conexion: document.getElementById('e_conexion').value,
+      conexion: (document.querySelector('input[name=e_conexion]:checked')||{}).value || 'ESTRELLA',
       continuidad: document.getElementById('e_continuidad').value,
       aislacion: state.aislacion,
       obsAislacion: document.getElementById('e_obsAislacion').value,
@@ -1013,7 +1024,7 @@ function resetForm(){
   document.getElementById('f_medidaCorrectiva').value='';
   document.getElementById('f_aplicaElectrica').checked=false;
   toggleElectrica(false);
-  document.getElementById('e_conexion').value='ESTRELLA';
+  document.querySelectorAll('input[name=e_conexion]').forEach(r => r.checked = (r.value === 'ESTRELLA'));
   document.getElementById('e_continuidad').value='';
   document.getElementById('e_obsAislacion').value='';
   document.getElementById('e_u1u2').value='';
@@ -1147,7 +1158,7 @@ async function editRecord(id){
   const el = rec.electrica || {};
   document.getElementById('f_aplicaElectrica').checked = !!rec.aplicaElectrica;
   toggleElectrica(!!rec.aplicaElectrica);
-  document.getElementById('e_conexion').value = el.conexion || 'ESTRELLA';
+  document.querySelectorAll('input[name=e_conexion]').forEach(r => r.checked = (r.value === (el.conexion || 'ESTRELLA')));
   document.getElementById('e_continuidad').value = el.continuidad || '';
   document.getElementById('e_obsAislacion').value = el.obsAislacion || '';
   document.getElementById('e_u1u2').value = el.u1u2 || '';
@@ -1192,18 +1203,10 @@ async function deleteRecord(id){
 /* ============================================================
    GENERACIÓN DE PDF — replica el formato oficial de los 3 documentos
    ============================================================ */
-const PRINT_EMBLEM_SVG = `<svg width="46" height="46" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="32" cy="32" r="30" fill="none" stroke="#000" stroke-width="2"/>
-  <circle cx="32" cy="32" r="23" fill="none" stroke="#000" stroke-width="1"/>
-  <circle cx="32" cy="8" r="3" fill="#000"/><circle cx="32" cy="56" r="3" fill="#000"/>
-  <circle cx="8" cy="32" r="3" fill="#000"/><circle cx="56" cy="32" r="3" fill="#000"/>
-  <path d="M20 38 L32 20 L44 38 Z" fill="none" stroke="#000" stroke-width="2" stroke-linejoin="round"/>
-  <circle cx="32" cy="34" r="5" fill="none" stroke="#000" stroke-width="2"/>
-</svg>`;
 function docHeader(rec, subtitle){
   return `<div class="doc-header">
     <div style="display:flex;align-items:center;gap:10px;">
-      ${PRINT_EMBLEM_SVG}
+      <img src="logo-sehinco.png" style="width:46px;height:46px;object-fit:contain;">
       <div class="co"><b>SOCIEDAD INDUSTRIAL Y COMERCIAL</b><br>SEHINCO LTDA.<br>FABRICACIÓN Y REPARACIÓN DE SELLOS MECANICOS<br>WWW.SEHINCO.CL</div>
     </div>
     <div class="ot">O.T. N°: ${rec.ot || '—'}</div>
@@ -1211,7 +1214,7 @@ function docHeader(rec, subtitle){
   <div class="doc-title">${subtitle}</div>`;
 }
 function docFooter(){
-  return `<p style="font-size:9.5px;color:#555;border-top:1px solid #000;padding-top:4px;margin-top:16px;">TORO MAZOTTE 0130 - FONO/FAX:227760857 - EMAIL: venta@sehinco.cl - ESTACION CENTRAL - SANTIAGO - CHILE</p>`;
+  return `<p style="font-size:9.5px;color:#555;border-top:1px solid #000;padding-top:4px;margin-top:16px;">TORO MAZOTTE 0130 - FONO/FAX:227760857 - EMAIL: ventas@sehinco.cl - ESTACION CENTRAL - SANTIAGO - CHILE</p>`;
 }
 function row(label, val){ return `<tr><td class="lbl">${label}</td><td>${val || ''}</td></tr>`; }
 
@@ -1289,12 +1292,13 @@ function pageElectrica(rec){
   const e = rec.electrica || {};
   const aisRows = (e.aislacion||[]).map(a => `<tr><td class="lbl" style="width:auto;">${a.label}</td><td>${a.kOhm1}</td><td>${a.mOhm1}</td><td>${a.gOhm1}</td><td>${a.voltaje1}</td><td>${a.kOhm2}</td><td>${a.mOhm2}</td><td>${a.gOhm2}</td><td>${a.voltaje2}</td></tr>`).join('');
   const concRow = (label, val) => `<tr><td class="lbl">${label}</td><td style="text-align:center;">${val==='Bueno'?'X':''}</td><td style="text-align:center;">${val==='Regular'?'X':''}</td><td style="text-align:center;">${val==='Malo'?'X':''}</td></tr>`;
+  const conexionTexto = e.conexion === 'DELTA' ? '▲ DELTA' : e.conexion === 'MONOFASICO' ? 'MONOFASICO' : '★ ESTRELLA';
   return `<div class="doc-page">
     ${docHeader(rec,'GUIA DE MANTENCION ELECTRICA DE EQUIPO')}
     <div class="doc-section-title">ESTADO ELECTRICO DEL BOBINADO MOTOR</div>
     <table class="doc-table">
       ${row('FECHA', fmtDate(rec.fecha))}${row('CLIENTE', rec.cliente)}${row('DIAGNOSTICO', rec.diagnostico)}
-      ${row('CODIGO / N° EQUIPO', (rec.componentes||[])[0]?.codigoEquipo)}${row('MAESTRO ASIGNADO', rec.tecnico)}${row('CONEXION', e.conexion)}
+      ${row('CODIGO / N° EQUIPO', (rec.componentes||[])[0]?.codigoEquipo)}${row('MAESTRO ASIGNADO', rec.tecnico)}${row('CONEXION', conexionTexto)}
     </table>
     <div class="doc-section-title">TABLA DE DATOS AISLACION</div>
     <table class="doc-table"><tr><th></th><th>KΩ</th><th>MΩ</th><th>GΩ</th><th>V.prueba 1</th><th>KΩ</th><th>MΩ</th><th>GΩ</th><th>V.prueba 2</th></tr>${aisRows}</table>
