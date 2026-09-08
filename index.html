@@ -81,6 +81,8 @@
     border-radius:10px; padding:12px 13px; font-size:16px; font-family:var(--mono); width:100%; min-height:46px;
     transition:border-color .15s, box-shadow .15s;
   }
+  input[type=text], textarea{ text-transform:uppercase; }
+  input[type=text]::placeholder, textarea::placeholder{ text-transform:none; }
   textarea{ font-family:var(--sans); min-height:64px; resize:vertical; }
   input:focus, select:focus, textarea:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
   input::placeholder, textarea::placeholder{ color:var(--text-faint); }
@@ -113,7 +115,7 @@
   .radio-row input{ width:18px; height:18px; accent-color:var(--accent); }
   .obs-flag{ display:flex; align-items:center; gap:9px; padding:7px 0; flex-wrap:wrap; }
   .obs-flag input[type=checkbox]{ width:18px; height:18px; accent-color:var(--danger); }
-  .obs-flag span{ font-size:13.5px; }
+  .obs-flag span{ font-size:13.5px; text-transform:uppercase; }
   .obs-flag input[type=text]{ margin-left:auto; max-width:150px; }
 
   /* ================= REPUESTOS ================= */
@@ -1142,7 +1144,11 @@ async function editRecord(id){
   document.getElementById('f_obsGeneral').value = rec.obsGeneral||'';
   state.checkIn = rec.checkIn || [];
   state.checkOut = rec.checkOut || [];
-  state.componentes = rec.componentes.length ? rec.componentes : [COMPONENT_FIELDS_TEMPLATE(), COMPONENT_FIELDS_TEMPLATE()];
+  let comps = rec.componentes.length ? rec.componentes : [COMPONENT_FIELDS_TEMPLATE(), COMPONENT_FIELDS_TEMPLATE()];
+  const motorComp = comps.find(c => c.nombre === 'MOTOR');
+  const bombaComp = comps.find(c => c.nombre === 'BOMBA');
+  if(motorComp && bombaComp) comps = [motorComp, bombaComp]; // Motor siempre primero, sin importar el orden que entregue la base
+  state.componentes = comps;
   // El nombre del componente ahora es fijo (MOTOR / BOMBA), aunque un registro viejo tenga otro nombre guardado
   if(state.componentes[0]) state.componentes[0].nombre = 'MOTOR';
   if(state.componentes[1]) state.componentes[1].nombre = 'BOMBA';
@@ -1217,7 +1223,8 @@ function row(label, val){ return `<tr><td class="lbl">${label}</td><td>${val || 
 
 function pageDatosIngreso(rec){
   const comps = rec.componentes || [];
-  const c0 = comps[0] || {}, c1 = comps[1] || {};
+  const c0 = comps.find(c => c.nombre === 'MOTOR') || comps[0] || {};
+  const c1 = comps.find(c => c.nombre === 'BOMBA') || comps[1] || {};
   const compRow = (label, key) => `<tr><td class="lbl">${label}</td><td>${c0[key]||''}</td><td>${c1[key]||''}</td></tr>`;
   const selloCuerpoTexto = (c) => [c.selloCuerpoEmpaquetadura ? `Empaq: ${c.selloCuerpoEmpaquetadura}` : '', c.selloCuerpoOring ? `O'Ring: ${c.selloCuerpoOring}` : ''].filter(Boolean).join(' / ');
   return `<div class="doc-page">
@@ -1257,7 +1264,8 @@ function pageDatosIngreso(rec){
 
 function pageInforme(rec){
   const comps = rec.componentes || [];
-  const c0 = comps[0] || {}, c1 = comps[1] || {};
+  const c0 = comps.find(c => c.nombre === 'MOTOR') || comps[0] || {};
+  const c1 = comps.find(c => c.nombre === 'BOMBA') || comps[1] || {};
   const compRow = (label, key) => `<tr><td class="lbl">${label}</td><td>${c0[key]||''}</td><td>${c1[key]||''}</td></tr>`;
   const repRows = (rec.repuestos||[]).map(r=>`<tr><td>${r.componente}</td><td>${r.descripcion}</td><td style="text-align:center;">${r.cantidad}</td></tr>`).join('');
   const compTable = `
