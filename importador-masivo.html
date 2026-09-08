@@ -235,8 +235,8 @@ const ETIQUETAS_INGRESO = {
   'EQUIPO':'equipo', 'USO':'uso', 'MARCA':'marca', 'MODELO':'modelo', 'SERIE':'serie',
   'POTENCIA':'potencia', 'CORRIENTE':'corriente', 'RPM':'rpm',
   'VOLTAJE':'voltaje', 'FRECUENCIA':'frecuencia', 'SELLO MEC.':'selloMecanico', 'IMPULSOR':'impulsor',
-  'DIAMETRO DEL IMPULSOR':'diamImpulsor', 'SELLO CUERPO BBA.':'selloCuerpoEmpaquetadura',
-  "O RING N":'selloCuerpoOring', 'MEDIDA TUERCA IMPULSOR':'medidaTuerca', 'OBSERVACION':'observacion'
+  'DIAMETRO DEL IMPULSOR':'diamImpulsor', 'EMPAQUETADURA':'selloCuerpoEmpaquetadura',
+  'ORING N':'selloCuerpoOring', 'MEDIDA TUERCA IMPULSOR':'medidaTuerca', 'OBSERVACION':'observacion'
 };
 
 // Campos que, por convención de Sehinco, siempre van en MOTOR aunque el PDF los muestre
@@ -606,7 +606,7 @@ function camposComponente(ot, comp, datos){
     ['Potencia','potencia'],['Corriente','corriente'],['Voltaje','voltaje'],['Frecuencia','frecuencia'],['RPM','rpm'],
     ['Rodamiento','rodamiento'],['Rod. reductor','rodamientoReductor'],['Retenes','retenes'],['Retenes reductor','retenesReductor'],
     ['Sello mecánico','selloMecanico'],['Impulsor','impulsor'],['Diám. impulsor','diamImpulsor'],
-    ['O-Ring','selloCuerpoOring'],['Medida tuerca','medidaTuerca']
+    ['Empaquetadura','selloCuerpoEmpaquetadura'],['O-Ring','selloCuerpoOring'],['Medida tuerca','medidaTuerca']
   ];
   return campos.map(([label,key]) => `
     <div class="field"><label>${label}</label><input type="text" id="f_${ot}_${comp}_${key}" value="${(datos[key]||'').toString().replace(/"/g,'&quot;')}"></div>
@@ -628,7 +628,7 @@ function repuestoRow(ot, i, r){
 function leerFormularioOt(ot){
   const v = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
   const campos = ['equipo','uso','marca','modelo','serie','potencia','corriente','voltaje','frecuencia','rpm',
-    'rodamiento','rodamientoReductor','retenes','retenesReductor','selloMecanico','impulsor','diamImpulsor','selloCuerpoOring','medidaTuerca'];
+    'rodamiento','rodamientoReductor','retenes','retenesReductor','selloMecanico','impulsor','diamImpulsor','selloCuerpoEmpaquetadura','selloCuerpoOring','medidaTuerca'];
   const motor = {}, bomba = {};
   campos.forEach(c => { motor[c] = v(`f_${ot}_motor_${c}`); bomba[c] = v(`f_${ot}_bomba_${c}`); });
 
@@ -685,7 +685,7 @@ async function importarUnaOt(ot){
       potencia: c.potencia, corriente: c.corriente, voltaje: c.voltaje, frecuencia: c.frecuencia, rpm: c.rpm,
       rodamiento: c.rodamiento, rod_reductor: c.rodamientoReductor, retenes: c.retenes, retenes_reductor: c.retenesReductor,
       sello_mecanico: c.selloMecanico, impulsor: c.impulsor, diam_impulsor: c.diamImpulsor,
-      sello_cuerpo_oring: c.selloCuerpoOring, medida_tuerca: c.medidaTuerca
+      sello_cuerpo_empaquetadura: c.selloCuerpoEmpaquetadura, sello_cuerpo_oring: c.selloCuerpoOring, medida_tuerca: c.medidaTuerca
     });
     const { error: errComp } = await sb.from('componentes').insert([compPayload('MOTOR', datos.motor), compPayload('BOMBA', datos.bomba)]);
     if(errComp) throw errComp;
