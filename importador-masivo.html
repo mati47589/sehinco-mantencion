@@ -187,69 +187,74 @@ async function leerPdfComoFilas(file){
   return filas; // array de filas; cada fila es un array de {str, x}
 }
 
-// Une los textos de una fila en un solo string (ignora columnas, útil para detectar títulos)
+// Une los textos de una fila en un solo string (solo para detectar títulos, no para datos)
 function filaTexto(fila){ return fila.map(i => i.str).join(' ').replace(/\s+/g,' ').trim(); }
+
+function normalizarClave(s){
+  return s.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[°ºª'`´]/g,'').replace(/\s+/g,' ').trim();
+}
+
+// Separa una fila en columnas reales según la posición X de cada trozo de texto.
+// Si el espacio entre un ítem y el siguiente es mayor al esperado por el ancho del
+// texto anterior, se considera un salto de columna (como una tabla real), en vez de
+// simplemente unir todo con un espacio (que es lo que rompía la separación Motor/Bomba).
+function filaEnColumnas(fila, umbralGap){
+  umbralGap = umbralGap || 16;
+  if(!fila.length) return [];
+  const columnas = [];
+  let actual = [fila[0]];
+  for(let i = 1; i < fila.length; i++){
+    const prev = fila[i-1];
+    const anchoEstimado = prev.str.length * 4.4 + 2;
+    const gap = fila[i].x - (prev.x + anchoEstimado);
+    if(gap > umbralGap){
+      columnas.push(actual);
+      actual = [fila[i]];
+    }else{
+      actual.push(fila[i]);
+    }
+  }
+  columnas.push(actual);
+  return columnas.map(c => ({
+    texto: c.map(it => it.str).join(' ').replace(/\s+/g,' ').trim(),
+    x: c[0].x
+  }));
+}
 
 /* ============================================================
    DICCIONARIO DE ETIQUETAS CONOCIDAS (formato fijo de Sehinco)
-   Se usan para trocear cada fila en label -> valor, sin depender
-   de coordenadas exactas de columna.
+   Cada etiqueta se compara EXACTA contra una columna completa —
+   así el título del documento ("...EQUIPO A MANTENCION") nunca
+   se confunde con la etiqueta "EQUIPO".
    ============================================================ */
-const ETIQUETAS_INGRESO = [
-  'GUIA DE DESPACHO CLIENTE','COTIZACION N','CLIENTE','FECHA',
-  'DIAGNOSTICO INICIAL','CODIGO / N EQUIPO','MAESTRO ASIGNADO','DESCRIPCION',
-  'RODAMIENTO MOTOR','RODAMIENTO REDUCTOR','RETENES REDUCTOR','RETENES',
-  'TIPO ACOPLAMIENTO','EQUIPO','USO','MARCA','MODELO','SERIE','POTENCIA','CORRIENTE','RPM',
-  'VOLTAJE','FRECUENCIA','SELLO MEC.','IMPULSOR','DIAMETRO DEL IMPULSOR','SELLO CUERPO BBA.',
-  "O'RING N","O RING N",'MEDIDA TUERCA IMPULSOR','OBSERVACION',
-  'DIAM. SUCCION','DIAM. DESCARGA','ALTURA','LUBRICANTE','CANT. LUBRIC.'
-].sort((a,b)=>b.length-a.length); // más largas primero, para no confundir "RETENES" con "RETENES REDUCTOR"
+const ETIQUETAS_INGRESO = {
+  'GUIA DE DESPACHO CLIENTE':'guia', 'COTIZACION N':'cot', 'CLIENTE':'cliente', 'FECHA':'fecha',
+  'DIAGNOSTICO INICIAL':'diagnosticoInicial', 'CODIGO / N EQUIPO':'codigoEquipo', 'MAESTRO ASIGNADO':'maestro',
+  'RODAMIENTO MOTOR':'rodamiento', 'RODAMIENTO REDUCTOR':'rodamientoReductor',
+  'RETENES REDUCTOR':'retenesReductor', 'RETENES':'retenes', 'TIPO ACOPLAMIENTO':'acoplamiento',
+  'EQUIPO':'equipo', 'USO':'uso', 'MARCA':'marca', 'MODELO':'modelo', 'SERIE':'serie',
+  'POTENCIA':'potencia', 'CORRIENTE':'corriente', 'RPM':'rpm',
+  'VOLTAJE':'voltaje', 'FRECUENCIA':'frecuencia', 'SELLO MEC.':'selloMecanico', 'IMPULSOR':'impulsor',
+  'DIAMETRO DEL IMPULSOR':'diamImpulsor', 'SELLO CUERPO BBA.':'selloCuerpoEmpaquetadura',
+  "O RING N":'selloCuerpoOring', 'MEDIDA TUERCA IMPULSOR':'medidaTuerca', 'OBSERVACION':'observacion'
+};
 
-function normalizarClave(s){
-  return s.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[°ºª]/g,'').replace(/\s+/g,' ').trim();
-}
+// Campos que, por convención de Sehinco, siempre van en MOTOR aunque el PDF los muestre
+// del lado derecho de la tabla (físicamente son parte de la bomba, pero así organizan los datos).
+const SIEMPRE_MOTOR = ['selloMecanico','impulsor','diamImpulsor','medidaTuerca','selloCuerpoOring','selloCuerpoEmpaquetadura','voltaje','frecuencia'];
 
-// Trocea el texto de una fila en pares [etiqueta, valor, etiqueta, valor...]
-// usando el diccionario de etiquetas conocidas.
-function trocearFila(textoFila, diccionario){
-  const texto = normalizarClave(textoFila);
-  const original = textoFila;
-  const hallazgos = [];
-  for(const etq of diccionario){
-    const idx = texto.indexOf(normalizarClave(etq));
-    if(idx !== -1) hallazgos.push({ etq, idx });
-  }
-  hallazgos.sort((a,b) => a.idx - b.idx);
-  // Quitar solapes (si una etiqueta larga ya cubre el mismo punto que otra corta)
-  const limpios = [];
-  for(const h of hallazgos){
-    if(!limpios.some(l => h.idx >= l.idx && h.idx < l.idx + normalizarClave(l.etq).length)){
-      limpios.push(h);
-    }
-  }
-  if(limpios.length === 0) return [];
-  const partes = [];
-  for(let i = 0; i < limpios.length; i++){
-    const inicio = limpios[i].idx + normalizarClave(limpios[i].etq).length;
-    const fin = i + 1 < limpios.length ? limpios[i+1].idx : texto.length;
-    // Extraer el fragmento correspondiente del texto ORIGINAL (no normalizado) por proporción de índice
-    const valor = original.slice(inicio, fin).trim().replace(/^[:\-–]\s*/,'');
-    partes.push({ etiqueta: limpios[i].etq, valor: valor === '(Q)' ? '' : valor });
-  }
-  return partes;
-}
+// Campos donde solo existe UN valor real (no se reparte entre Motor y Bomba)
+const CAMPO_UNICO = ['cliente','fecha','guia','cot','diagnosticoInicial','codigoEquipo','maestro','observacion'];
 
 /* ============================================================
    DETECCIÓN DE SECCIONES DENTRO DE CUALQUIER PDF
-   (funciona igual si viene todo en 1 PDF combinado o en varios separados)
    ============================================================ */
 async function extraerSeccionesDePdf(file){
   const filas = await leerPdfComoFilas(file);
   const secciones = { datos: [], informe: [], electrico: [] };
   let actual = null;
   for(const fila of filas){
-    const texto = filaTexto(fila);
-    const up = normalizarClave(texto);
+    const up = normalizarClave(filaTexto(fila));
     if(up.includes('DATOS DE INGRESO EQUIPO')) actual = 'datos';
     else if(up.includes('INFORME DE MANTENIMIENTO')) actual = 'informe';
     else if(up.includes('GUIA DE MANTENCION ELECTRICA')) actual = 'electrico';
@@ -259,33 +264,104 @@ async function extraerSeccionesDePdf(file){
 }
 
 /* ============================================================
-   PARSEO DE "DATOS DE INGRESO" (recibe filas ya extraídas)
+   PARSEO DE "DATOS DE INGRESO" usando columnas reales
    ============================================================ */
+// Encuentra TODAS las etiquetas conocidas dentro de una fila ya separada en columnas
+// (una fila puede traer 1 etiqueta con su valor, o 2 pares "etiqueta-valor" juntos,
+// como "VOLTAJE  380 V  SELLO MEC.  430 M22...").
+function extraerParesDeFila(columnas){
+  const marcas = [];
+  columnas.forEach((c, idx) => {
+    const norm = normalizarClave(c.texto);
+    if(ETIQUETAS_INGRESO[norm] !== undefined) marcas.push({ idx, campo: ETIQUETAS_INGRESO[norm] });
+  });
+  const pares = [];
+  for(let i = 0; i < marcas.length; i++){
+    const inicio = marcas[i].idx + 1;
+    const fin = i + 1 < marcas.length ? marcas[i+1].idx : columnas.length;
+    const valores = columnas.slice(inicio, fin).filter(c => normalizarClave(c.texto) !== '(Q)' && c.texto);
+    pares.push({ campo: marcas[i].campo, valores });
+  }
+  return pares;
+}
+
 function parsearDatosIngresoFilas(filas){
   const datos = { ot:'', cliente:'', equipoGeneral:'', fecha:'', guia:'', cot:'', motor:{}, bomba:{} };
+  // Referencias de posición X de la columna "Motor" y "Bomba", calculadas a partir de
+  // filas donde SÍ vienen los dos valores (para poder ubicar filas con un solo valor).
+  const refX = { motor: [], bomba: [] };
+  const filasProcesadas = [];
+  let contadorFilas = 0;
 
   for(const fila of filas){
-    const texto = filaTexto(fila);
-    const up = normalizarClave(texto);
-
-    let m = texto.match(/O\.?T\.?\s*N[°º]?\s*:?\s*(\d{3,7})/i);
+    const textoPlano = filaTexto(fila);
+    let m = textoPlano.match(/O\.?T\.?\s*N[°º]?\s*:?\s*(\d{3,7})/i);
     if(m) datos.ot = m[1];
 
-    if(up.startsWith('CLIENTE') && !datos.cliente){ datos.cliente = texto.replace(/^CLIENTE/i,'').trim(); continue; }
-    if(up.startsWith('FECHA') && !datos.fecha){
-      const fm = texto.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-      if(fm) datos.fecha = `${fm[3]}-${fm[2].padStart(2,'0')}-${fm[1].padStart(2,'0')}`;
-      continue;
-    }
-    if(up.startsWith('GUIA DE DESPACHO')){ datos.guia = texto.replace(/^GUIA DE DESPACHO CLIENTE/i,'').trim(); continue; }
-    if(up.startsWith('COTIZACION')){ datos.cot = texto.replace(/^COTIZACION N[°º]?/i,'').trim(); continue; }
-    if(up === 'EQUIPO' || (up.startsWith('EQUIPO') && !datos.equipoGeneral && fila.length <= 3)){
-      const val = texto.replace(/^EQUIPO/i,'').trim();
-      if(val && !datos.equipoGeneral) datos.equipoGeneral = val;
-    }
+    const up = normalizarClave(textoPlano);
+    if(up.includes('DATOS DE INGRESO EQUIPO A MANTENCION')) continue; // es el título, no un dato
 
-    const partes = trocearFila(texto, ETIQUETAS_INGRESO);
-    for(const p of partes) asignarCampo(datos, p.etiqueta, p.valor, fila, texto);
+    contadorFilas++;
+    filasProcesadas.push({ columnas: filaEnColumnas(fila), orden: contadorFilas });
+  }
+
+  // Primera pasada: calibrar la posición X esperada de Motor/Bomba usando filas con 2 valores
+  for(const { columnas } of filasProcesadas){
+    for(const par of extraerParesDeFila(columnas)){
+      if(SIEMPRE_MOTOR.includes(par.campo) || CAMPO_UNICO.includes(par.campo)) continue;
+      if(par.valores.length >= 2){
+        refX.motor.push(par.valores[0].x);
+        refX.bomba.push(par.valores[1].x);
+      }
+    }
+  }
+  const prom = (arr) => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+  const xMotor = prom(refX.motor);
+  const xBomba = prom(refX.bomba);
+
+  // Segunda pasada: asignar los valores definitivos, ya con las columnas de referencia listas
+  for(const { columnas, orden } of filasProcesadas){
+    for(const par of extraerParesDeFila(columnas)){
+      const campo = par.campo;
+      const valores = par.valores;
+
+      if(campo === 'observacion'){ datos.observacionGeneral = valores.map(v=>v.texto).join(' ').trim(); continue; }
+      if(CAMPO_UNICO.includes(campo)){
+        if(campo === 'fecha' && valores[0]){
+          const fm = valores[0].texto.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+          datos.fecha = fm ? `${fm[3]}-${fm[2].padStart(2,'0')}-${fm[1].padStart(2,'0')}` : '';
+        }else if(campo === 'cliente') datos.cliente = valores[0]?.texto || '';
+        else if(campo === 'guia') datos.guia = valores[0]?.texto || '';
+        else if(campo === 'cot') datos.cot = valores[0]?.texto || '';
+        continue;
+      }
+      if(!valores.length) continue;
+      if(campo === 'equipo' && !datos.equipoGeneral && valores.length === 1 && orden <= 10){
+        // La primera fila "EQUIPO   MOTOBOMBA" (antes de la tabla Motor/Bomba) define el equipo general
+        datos.equipoGeneral = valores[0].texto;
+        continue;
+      }
+
+      if(SIEMPRE_MOTOR.includes(campo)){
+        datos.motor[campo] = valores[0].texto;
+        continue;
+      }
+      if(valores.length >= 2){
+        datos.motor[campo] = valores[0].texto;
+        datos.bomba[campo] = valores[1].texto;
+      }else{
+        // Un solo valor: decidir si es de Motor o de Bomba según su posición X real
+        const v = valores[0];
+        if(xMotor !== null && xBomba !== null){
+          const distMotor = Math.abs(v.x - xMotor);
+          const distBomba = Math.abs(v.x - xBomba);
+          if(distBomba < distMotor) datos.bomba[campo] = v.texto;
+          else datos.motor[campo] = v.texto;
+        }else{
+          datos.motor[campo] = v.texto; // sin referencia suficiente, mejor esfuerzo
+        }
+      }
+    }
   }
   return datos;
 }
@@ -337,45 +413,6 @@ function parsearElectricoFilas(filas){
   datos.concBobinado = /ESTADO DE BOBINADO[\s\S]{0,40}X/i.test(texto) ? 'Bueno' : '';
   datos.concPlaca = /PLACA DE BORNE[\s\S]{0,40}X/i.test(texto) ? 'Bueno' : '';
   return datos;
-}
-
-// Mapa de qué campo del componente corresponde cada etiqueta
-const CAMPO_MOTOR_BOMBA = {
-  'EQUIPO':'equipo', 'USO':'uso', 'MARCA':'marca', 'MODELO':'modelo', 'SERIE':'serie',
-  'POTENCIA':'potencia', 'CORRIENTE':'corriente', 'RPM':'rpm',
-  'RODAMIENTO MOTOR':'rodamiento', 'RETENES':'retenes',
-  'VOLTAJE':'voltaje', 'FRECUENCIA':'frecuencia',
-  "SELLO MEC.":'selloMecanico', 'IMPULSOR':'impulsor', 'DIAMETRO DEL IMPULSOR':'diamImpulsor',
-  'MEDIDA TUERCA IMPULSOR':'medidaTuerca'
-};
-
-function asignarCampo(datos, etiqueta, valor, fila, textoCompleto){
-  if(!valor) return;
-  const campo = CAMPO_MOTOR_BOMBA[etiqueta];
-  if(campo){
-    // Según la convención de Sehinco: Sello Mecánico, Impulsor, Diámetro impulsor y Medida
-    // tuerca impulsor siempre van en MOTOR (aunque en el PDF aparezcan del lado derecho).
-    const siempreMotor = ['selloMecanico','impulsor','diamImpulsor','medidaTuerca'];
-    if(siempreMotor.includes(campo)){
-      datos.motor[campo] = valor;
-      return;
-    }
-    // Si hay dos valores en la misma fila (Motor y Bomba con datos distintos), separar por
-    // el doble espacio más ancho del texto original.
-    const dobles = textoCompleto.split(/\s{3,}/).filter(Boolean);
-    if(dobles.length >= 2 && !datos.motor[campo]){
-      datos.motor[campo] = dobles[dobles.length - 2] || valor;
-      datos.bomba[campo] = dobles[dobles.length - 1] || '';
-    }else{
-      if(!datos.motor[campo]) datos.motor[campo] = valor;
-      else if(!datos.bomba[campo]) datos.bomba[campo] = valor;
-    }
-  }
-  if(etiqueta === "O'RING N" || etiqueta === 'O RING N'){ datos.motor.selloCuerpoOring = valor; }
-  if(etiqueta === 'RODAMIENTO REDUCTOR'){ datos.motor.rodamientoReductor = valor; }
-  if(etiqueta === 'RETENES REDUCTOR'){ datos.motor.retenesReductor = valor; }
-  if(etiqueta === 'DIAGNOSTICO INICIAL' && !datos.diagnosticoInicial){ datos.diagnosticoInicial = valor; }
-  if(etiqueta === 'OBSERVACION'){ datos.observacionGeneral = valor; }
 }
 
 /* ============================================================
