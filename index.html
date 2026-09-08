@@ -746,6 +746,8 @@ function renderCompPanes(){
       <div class="grid2">
         ${fieldRow('Potencia', i, 'potencia', {ph:'3 KW'})}
         ${fieldRow('Corriente', i, 'corriente', {ph:'6.4 AMP'})}
+        ${fieldRow('Voltaje', i, 'voltaje', {ph:'380 V'})}
+        ${fieldRow('Frecuencia', i, 'frecuencia', {ph:'50 HZ'})}
         ${fieldRow('RPM', i, 'rpm', {ph:'2880 RPM'})}
       </div>
     </fieldset>
@@ -1246,6 +1248,8 @@ function pageDatosIngreso(rec){
       ${compRow('SERIE','serie')}
       ${compRow('POTENCIA','potencia')}
       ${compRow('CORRIENTE','corriente')}
+      ${compRow('VOLTAJE','voltaje')}
+      ${compRow('FRECUENCIA','frecuencia')}
       ${compRow('RPM','rpm')}
       ${compRow('TIPO ACOPLAMIENTO','acoplamiento')}
       ${compRow('RODAMIENTO','rodamiento')}
@@ -1277,6 +1281,8 @@ function pageInforme(rec){
       ${compRow('N° Serie','serie')}
       ${compRow('Potencia','potencia')}
       ${compRow('Corriente','corriente')}
+      ${compRow('Voltaje','voltaje')}
+      ${compRow('Frecuencia','frecuencia')}
       ${compRow('Velocidad / RPM','rpm')}
     </table>`;
   return `<div class="doc-page">
@@ -1359,7 +1365,7 @@ async function exportCSV(){
   const recs = await listAllRecords();
   if(recs.length === 0){ showToast('No hay registros para exportar', 'error'); return; }
   const cols = ['ot','cot','codigoEquipo','fecha','cliente','guia','tecnico','diagnostico','obsGeneral'];
-  const compCols = ['nombre','equipo','uso','codigoEquipo','marca','modelo','serie','potencia','corriente','rpm','rodamiento','rodamientoReductor','retenes','retenesReductor','selloMecanico','impulsor','diamImpulsor','selloCuerpoEmpaquetadura','selloCuerpoOring','medidaTuerca','observacion'];
+  const compCols = ['nombre','equipo','uso','codigoEquipo','marca','modelo','serie','potencia','corriente','voltaje','frecuencia','rpm','rodamiento','rodamientoReductor','retenes','retenesReductor','selloMecanico','impulsor','diamImpulsor','selloCuerpoEmpaquetadura','selloCuerpoOring','medidaTuerca','observacion'];
   const maxComp = Math.max(1, ...recs.map(r=>r.componentes.length));
   const header = [...cols, ...Array.from({length:maxComp}).flatMap((_,i)=>compCols.map(c=>`comp${i+1}_${c}`))];
   const rows = recs.map(r => {
