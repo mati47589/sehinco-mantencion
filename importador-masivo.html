@@ -98,9 +98,11 @@
   <header>
     <h1>Importador masivo de OT antiguas</h1>
     <p>
-      Selecciona la <b>carpeta que contiene una subcarpeta por cada OT</b> (con sus 3 PDF y las fotos adentro).
-      El programa lee cada PDF automáticamente y arma la información para subir a Supabase — pero
-      <b>siempre revisa el resumen de cada OT antes de confirmar</b>, por si algún dato quedó mal leído.
+      Selecciona la <b>carpeta que contiene una subcarpeta por cada OT</b> (con su(s) PDF y las fotos adentro).
+      No importa si cada OT trae un solo PDF combinado con todo, o los 3 documentos separados —
+      el programa busca cada sección (Datos de Ingreso, Informe, Guía Eléctrica) por su título dentro
+      de los PDF, no por el nombre del archivo. Aun así, <b>siempre revisa el resumen de cada OT antes de
+      confirmar</b>, por si algún dato quedó mal leído.
     </p>
   </header>
 
@@ -238,54 +240,102 @@ function trocearFila(textoFila, diccionario){
 }
 
 /* ============================================================
-   PARSEO DE "DATOS DE INGRESO"
+   DETECCIÓN DE SECCIONES DENTRO DE CUALQUIER PDF
+   (funciona igual si viene todo en 1 PDF combinado o en varios separados)
    ============================================================ */
-async function parsearDatosIngreso(file){
+async function extraerSeccionesDePdf(file){
   const filas = await leerPdfComoFilas(file);
-  const datos = { ot:'', cliente:'', equipoGeneral:'', fecha:'', guia:'', cot:'',
-    motor:{}, bomba:{} };
+  const secciones = { datos: [], informe: [], electrico: [] };
+  let actual = null;
+  for(const fila of filas){
+    const texto = filaTexto(fila);
+    const up = normalizarClave(texto);
+    if(up.includes('DATOS DE INGRESO EQUIPO')) actual = 'datos';
+    else if(up.includes('INFORME DE MANTENIMIENTO')) actual = 'informe';
+    else if(up.includes('GUIA DE MANTENCION ELECTRICA')) actual = 'electrico';
+    if(actual) secciones[actual].push(fila);
+  }
+  return secciones;
+}
+
+/* ============================================================
+   PARSEO DE "DATOS DE INGRESO" (recibe filas ya extraídas)
+   ============================================================ */
+function parsearDatosIngresoFilas(filas){
+  const datos = { ot:'', cliente:'', equipoGeneral:'', fecha:'', guia:'', cot:'', motor:{}, bomba:{} };
 
   for(const fila of filas){
     const texto = filaTexto(fila);
     const up = normalizarClave(texto);
 
-    // O.T. N°
     let m = texto.match(/O\.?T\.?\s*N[°º]?\s*:?\s*(\d{3,7})/i);
     if(m) datos.ot = m[1];
 
-    if(up.startsWith('CLIENTE') && !datos.cliente){
-      datos.cliente = texto.replace(/^CLIENTE/i,'').trim();
-      continue;
-    }
+    if(up.startsWith('CLIENTE') && !datos.cliente){ datos.cliente = texto.replace(/^CLIENTE/i,'').trim(); continue; }
     if(up.startsWith('FECHA') && !datos.fecha){
       const fm = texto.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
       if(fm) datos.fecha = `${fm[3]}-${fm[2].padStart(2,'0')}-${fm[1].padStart(2,'0')}`;
       continue;
     }
-    if(up.startsWith('GUIA DE DESPACHO')){
-      datos.guia = texto.replace(/^GUIA DE DESPACHO CLIENTE/i,'').trim();
-      continue;
-    }
-    if(up.startsWith('COTIZACION')){
-      datos.cot = texto.replace(/^COTIZACION N[°º]?/i,'').trim();
-      continue;
-    }
-    // La fila superior "EQUIPO   MOTOBOMBA" (antes de llegar a la tabla motor/bomba) define el equipo general
+    if(up.startsWith('GUIA DE DESPACHO')){ datos.guia = texto.replace(/^GUIA DE DESPACHO CLIENTE/i,'').trim(); continue; }
+    if(up.startsWith('COTIZACION')){ datos.cot = texto.replace(/^COTIZACION N[°º]?/i,'').trim(); continue; }
     if(up === 'EQUIPO' || (up.startsWith('EQUIPO') && !datos.equipoGeneral && fila.length <= 3)){
       const val = texto.replace(/^EQUIPO/i,'').trim();
       if(val && !datos.equipoGeneral) datos.equipoGeneral = val;
     }
 
-    // Filas con 2 o más pares etiqueta/valor -> estas son las de la tabla Motor/Bomba
     const partes = trocearFila(texto, ETIQUETAS_INGRESO);
-    if(partes.length >= 1){
-      // Si la fila tiene UNA etiqueta con potencialmente dos valores (motor/bomba) separados por
-      // muchos espacios en el texto original, tratamos de separarlos por posición de columnas.
-      for(const p of partes){
-        asignarCampo(datos, p.etiqueta, p.valor, fila, texto);
-      }
+    for(const p of partes) asignarCampo(datos, p.etiqueta, p.valor, fila, texto);
+  }
+  return datos;
+}
+
+/* ============================================================
+   PARSEO DE "INFORME" — repuestos, trabajo, conclusión, sugerencia
+   (todo esto vive junto en el mismo PDF combinado, uno detrás del otro)
+   ============================================================ */
+function parsearInformeFilas(filas){
+  const texto = filas.map(filaTexto).join('\n');
+  const datos = { repuestos: [], descripcionTrabajo:'', conclusion:'', sugerencia:'' };
+
+  const repMatch = texto.match(/R\s*E\s*P\s*U\s*E\s*S\s*T\s*O\s*S([\s\S]*?)(INFORMACION|DESCRIPCION DEL TRABAJO)/i);
+  if(repMatch){
+    const lineas = repMatch[1].split('\n').map(l=>l.trim()).filter(Boolean);
+    for(const l of lineas){
+      if(/componentes/i.test(l) || /descripci/i.test(l) || /cantidad/i.test(l)) continue;
+      const m = l.match(/^(.+?)\s{2,}(.+?)\s+(\d+)\s*$/);
+      if(m) datos.repuestos.push({ componente: m[1].trim(), descripcion: m[2].trim(), cantidad: m[3].trim() });
     }
   }
+  const trabajoMatch = texto.match(/DESCRIPCION DEL TRABAJO([\s\S]*?)(PREPARADO POR|CONCLUSION\s*:|$)/i);
+  if(trabajoMatch) datos.descripcionTrabajo = trabajoMatch[1].replace(/\n/g,' ').replace(/\s+/g,' ').trim();
+
+  const concMatch = texto.match(/CONCLUSION\s*:([\s\S]*?)(NOTA\s*:|SUGERENCIA\s*:|$)/i);
+  if(concMatch) datos.conclusion = concMatch[1].replace(/\n/g,' ').replace(/\s+/g,' ').trim();
+
+  const sugMatch = texto.match(/SUGERENCIA\s*:([\s\S]*?)(MEDIDA ADICIONAL|OBSERVACION\s*:|$)/i);
+  if(sugMatch) datos.sugerencia = sugMatch[1].replace(/\n/g,' ').replace(/\s+/g,' ').trim();
+
+  return datos;
+}
+
+/* ============================================================
+   PARSEO DE "GUIA DE MANTENCION ELECTRICA"
+   ============================================================ */
+function parsearElectricoFilas(filas){
+  const texto = filas.map(filaTexto).join('\n');
+  const datos = { conexion:'ESTRELLA', u1u2:'', v1v2:'', w1w2:'', r:'', s:'', t:'', concBobinado:'', concPlaca:'' };
+  if(!filas.length) return null;
+  if(/ESTRELLA/i.test(texto)) datos.conexion = 'ESTRELLA';
+  if(/DELTA|TRIANGULO/i.test(texto)) datos.conexion = 'DELTA';
+  let m = texto.match(/U1\s*-\s*U2\s+([\d.,]+)/i); if(m) datos.u1u2 = m[1];
+  m = texto.match(/V1\s*-\s*V2\s+([\d.,]+)/i); if(m) datos.v1v2 = m[1];
+  m = texto.match(/W1\s*-\s*W2\s+([\d.,]+)/i); if(m) datos.w1w2 = m[1];
+  m = texto.match(/\bR\s+([\d.,]+\s*AMP)/i); if(m) datos.r = m[1];
+  m = texto.match(/\bS\s+([\d.,]+\s*AMP)/i); if(m) datos.s = m[1];
+  m = texto.match(/\bT\s+([\d.,]+\s*AMP)/i); if(m) datos.t = m[1];
+  datos.concBobinado = /ESTADO DE BOBINADO[\s\S]{0,40}X/i.test(texto) ? 'Bueno' : '';
+  datos.concPlaca = /PLACA DE BORNE[\s\S]{0,40}X/i.test(texto) ? 'Bueno' : '';
   return datos;
 }
 
@@ -329,62 +379,6 @@ function asignarCampo(datos, etiqueta, valor, fila, textoCompleto){
 }
 
 /* ============================================================
-   PARSEO DE "INFORME DE MANTENIMIENTO" (repuestos, trabajo, conclusión)
-   ============================================================ */
-async function parsearInforme(file){
-  const filas = await leerPdfComoFilas(file);
-  const texto = filas.map(filaTexto).join('\n');
-  const datos = { repuestos: [], descripcionTrabajo:'', conclusion:'', sugerencia:'' };
-
-  // Repuestos: líneas entre "R E P U E S T O S" (o "REPUESTOS") y "INFORMACION COMPLEMENTARIA"
-  const repMatch = texto.match(/R\s*E\s*P\s*U\s*E\s*S\s*T\s*O\s*S([\s\S]*?)(INFORMACION|DESCRIPCION DEL TRABAJO)/i);
-  if(repMatch){
-    const lineas = repMatch[1].split('\n').map(l=>l.trim()).filter(Boolean);
-    for(const l of lineas){
-      if(/componentes/i.test(l) || /descripci/i.test(l) || /cantidad/i.test(l)) continue;
-      const m = l.match(/^(.+?)\s{2,}(.+?)\s+(\d+)\s*$/);
-      if(m) datos.repuestos.push({ componente: m[1].trim(), descripcion: m[2].trim(), cantidad: m[3].trim() });
-    }
-  }
-  // Descripción del trabajo
-  const trabajoMatch = texto.match(/DESCRIPCION DEL TRABAJO([\s\S]*?)(PREPARADO POR|$)/i);
-  if(trabajoMatch) datos.descripcionTrabajo = trabajoMatch[1].replace(/\n/g,' ').trim();
-
-  return datos;
-}
-
-async function parsearConclusion(file){
-  const filas = await leerPdfComoFilas(file);
-  const texto = filas.map(filaTexto).join('\n');
-  const datos = { conclusion:'', sugerencia:'' };
-  const concMatch = texto.match(/CONCLUSION:?([\s\S]*?)(NOTA:|SUGERENCIA:|$)/i);
-  if(concMatch) datos.conclusion = concMatch[1].replace(/\n/g,' ').trim();
-  const sugMatch = texto.match(/SUGERENCIA:?([\s\S]*?)(MEDIDA ADICIONAL|OBSERVACION|$)/i);
-  if(sugMatch) datos.sugerencia = sugMatch[1].replace(/\n/g,' ').trim();
-  return datos;
-}
-
-/* ============================================================
-   PARSEO DE "GUIA DE MANTENCION ELECTRICA"
-   ============================================================ */
-async function parsearElectrico(file){
-  const filas = await leerPdfComoFilas(file);
-  const texto = filas.map(filaTexto).join('\n');
-  const datos = { aplica:true, conexion:'ESTRELLA', u1u2:'', v1v2:'', w1w2:'', r:'', s:'', t:'', concBobinado:'', concPlaca:'' };
-  if(/ESTRELLA/i.test(texto)) datos.conexion = 'ESTRELLA';
-  if(/DELTA|TRIANGULO/i.test(texto)) datos.conexion = 'DELTA';
-  let m = texto.match(/U1\s*-\s*U2\s+([\d.,]+)/i); if(m) datos.u1u2 = m[1];
-  m = texto.match(/V1\s*-\s*V2\s+([\d.,]+)/i); if(m) datos.v1v2 = m[1];
-  m = texto.match(/W1\s*-\s*W2\s+([\d.,]+)/i); if(m) datos.w1w2 = m[1];
-  m = texto.match(/\bR\s+([\d.,]+\s*AMP)/i); if(m) datos.r = m[1];
-  m = texto.match(/\bS\s+([\d.,]+\s*AMP)/i); if(m) datos.s = m[1];
-  m = texto.match(/\bT\s+([\d.,]+\s*AMP)/i); if(m) datos.t = m[1];
-  datos.concBobinado = /ESTADO DE BOBINADO[\s\S]{0,40}X/i.test(texto) ? 'Bueno' : '';
-  datos.concPlaca = /PLACA DE BORNE[\s\S]{0,40}X/i.test(texto) ? 'Bueno' : '';
-  return datos;
-}
-
-/* ============================================================
    AGRUPAR ARCHIVOS POR OT Y PROCESAR
    ============================================================ */
 let lotesOT = {}; // { '23449': { archivos:{datos,informe,conclusion,electrico,fotos:[]}, datos:{...}, estado:'' } }
@@ -398,14 +392,6 @@ function detectarOTDesdeNombre(filename){
   return m ? m[1] : null;
 }
 
-function tipoDePdf(filename){
-  const f = filename.toUpperCase();
-  if(f.includes('DATOS') && f.includes('INGRES')) return 'datos';
-  if(f.includes('MTTO') || f.includes('ELECTRIC') || f.includes('ELÉCTRIC')) return 'electrico';
-  if(f.includes('INFORME') && !f.includes('MTTO')) return 'informe';
-  return null;
-}
-
 document.getElementById('folderInput').addEventListener('change', async (e) => {
   await procesarArchivos(e.target.files);
 });
@@ -417,24 +403,30 @@ async function procesarArchivos(fileList){
   statusEl.textContent = 'Agrupando archivos por OT...';
   lotesOT = {};
 
+  // Agrupamos por la carpeta (webkitRelativePath) cuando existe, y si no, por el número de OT
+  // detectado en el nombre del archivo. Todos los PDF de una misma OT se juntan en una sola
+  // lista — no importa si es 1 PDF combinado o varios separados, cada uno se revisa por su
+  // contenido para encontrar las secciones que traiga.
   for(const file of fileList){
-    const otDetectada = detectarOTDesdeNombre(file.name);
-    if(!otDetectada) continue;
-    if(!lotesOT[otDetectada]) lotesOT[otDetectada] = { archivos:{fotos:[]}, datos:null, estado:'pendiente' };
+    let clave = null;
+    if(file.webkitRelativePath){
+      const partes = file.webkitRelativePath.split('/');
+      if(partes.length > 2) clave = detectarOTDesdeNombre(partes[1]) || partes[1];
+    }
+    if(!clave) clave = detectarOTDesdeNombre(file.name);
+    if(!clave) continue;
+    if(!lotesOT[clave]) lotesOT[clave] = { archivos:{fotos:[], pdfs:[]}, datos:null, estado:'pendiente' };
     if(file.type.startsWith('image/')){
-      lotesOT[otDetectada].archivos.fotos.push(file);
+      lotesOT[clave].archivos.fotos.push(file);
     }else if(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')){
-      const tipo = tipoDePdf(file.name);
-      if(tipo === 'datos') lotesOT[otDetectada].archivos.datos = file;
-      else if(tipo === 'informe') lotesOT[otDetectada].archivos.informe = file;
-      else if(tipo === 'electrico') lotesOT[otDetectada].archivos.electrico = file;
+      lotesOT[clave].archivos.pdfs.push(file);
     }
   }
 
   const otKeys = Object.keys(lotesOT);
   if(otKeys.length === 0){
     statusEl.className = 'status-line err';
-    statusEl.textContent = 'No se detectó ninguna OT en los archivos seleccionados. Revisa que los nombres de archivo incluyan el número de OT.';
+    statusEl.textContent = 'No se detectó ninguna OT en los archivos seleccionados. Revisa que los nombres de archivo o de carpeta incluyan el número de OT.';
     return;
   }
 
@@ -449,12 +441,19 @@ async function procesarArchivos(fileList){
     statusEl.textContent = `Leyendo OT ${ot} (${idx+1}/${otKeys.length})...`;
     const lote = lotesOT[ot];
     try{
-      const datosIngreso = lote.archivos.datos ? await parsearDatosIngreso(lote.archivos.datos) : { ot, motor:{}, bomba:{} };
-      const informe = lote.archivos.informe ? await parsearInforme(lote.archivos.informe) : { repuestos:[], descripcionTrabajo:'' };
-      const conclusionData = lote.archivos.informe ? await parsearConclusion(lote.archivos.informe) : { conclusion:'', sugerencia:'' };
-      const electrico = lote.archivos.electrico ? await parsearElectrico(lote.archivos.electrico) : null;
+      // Juntamos las secciones encontradas en TODOS los PDF de esta OT (sea 1 combinado o varios)
+      const seccionesTotales = { datos: [], informe: [], electrico: [] };
+      for(const pdf of lote.archivos.pdfs){
+        const sec = await extraerSeccionesDePdf(pdf);
+        seccionesTotales.datos.push(...sec.datos);
+        seccionesTotales.informe.push(...sec.informe);
+        seccionesTotales.electrico.push(...sec.electrico);
+      }
+      const datosIngreso = parsearDatosIngresoFilas(seccionesTotales.datos);
+      const informe = parsearInformeFilas(seccionesTotales.informe);
+      const electrico = parsearElectricoFilas(seccionesTotales.electrico);
       lote.datos = {
-        ot: datosIngreso.ot || ot,
+        ot: datosIngreso.ot || (/^\d+$/.test(ot) ? ot : ''),
         cliente: datosIngreso.cliente || '',
         equipoGeneral: datosIngreso.equipoGeneral || '',
         fecha: datosIngreso.fecha || '',
@@ -464,10 +463,10 @@ async function procesarArchivos(fileList){
         bomba: datosIngreso.bomba || {},
         repuestos: informe.repuestos || [],
         descripcionTrabajo: informe.descripcionTrabajo || '',
-        conclusion: conclusionData.conclusion || '',
-        sugerencia: conclusionData.sugerencia || '',
+        conclusion: informe.conclusion || '',
+        sugerencia: informe.sugerencia || '',
         observacionGeneral: datosIngreso.observacionGeneral || '',
-        aplicaElectrica: !!lote.archivos.electrico,
+        aplicaElectrica: !!electrico,
         electrico: electrico
       };
       lote.estado = 'leido';
