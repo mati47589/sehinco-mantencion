@@ -707,15 +707,17 @@ async function importarUnaOt(ot){
     const { error: errComp } = await sb.from('componentes').insert([compPayload('MOTOR', datos.motor), compPayload('BOMBA', datos.bomba)]);
     if(errComp) throw errComp;
 
-    for(const r of datos.repuestos){
-      await sb.from('repuestos').insert({ ingreso_id: ingresoId, componente: r.componente, descripcion: r.descripcion, cantidad: r.cantidad });
+    if(datos.repuestos.length){
+      const { error: errRep } = await sb.from('repuestos').insert(
+        datos.repuestos.map(r => ({ ingreso_id: ingresoId, componente: r.componente, descripcion: r.descripcion, cantidad: r.cantidad }))
+      );
+      if(errRep) console.error('repuestos', errRep);
     }
 
-    // Fotos
+    // Fotos: se suben todas EN PARALELO (antes se subían de a una, esperando cada una)
     const fotos = lotesOT[ot].archivos.fotos;
-    let fotosOk = 0;
-    for(let i = 0; i < fotos.length; i++){
-      const file = fotos[i];
+    statusEl.textContent = `Subiendo ${fotos.length} foto(s) en paralelo...`;
+    const subidas = await Promise.all(fotos.map(async (file, i) => {
       const m = file.name.match(/^(\d+)(?:[_\-](\d+))?/);
       const numero = m ? parseInt(m[1],10) : (100+i);
       const esRepetida = /repetid/i.test(file.name) || numero === 99;
@@ -726,10 +728,15 @@ async function importarUnaOt(ot){
         const path = `${carpetaIngreso(datos)}/${nombreArchivo}`;
         const { error: upErr } = await sb.storage.from(CONFIG.STORAGE_BUCKET).upload(path, file, { upsert:true });
         if(upErr) throw upErr;
-        await sb.from('fotos').insert({ ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero });
-        fotosOk++;
-      }catch(e){ console.error('foto', file.name, e); }
+        return { ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero };
+      }catch(e){ console.error('foto', file.name, e); return null; }
+    }));
+    const filasFotos = subidas.filter(Boolean);
+    if(filasFotos.length){
+      const { error: errFotos } = await sb.from('fotos').insert(filasFotos);
+      if(errFotos) console.error('fotos insert', errFotos);
     }
+    const fotosOk = filasFotos.length;
 
     lote.estado = 'importado';
     renderOtSummary(ot);
@@ -760,11 +767,16 @@ async function importarTodo(){
   const btn = document.getElementById('btnImportarTodo');
   btn.disabled = true;
   const textoOriginal = btn.textContent;
+  const CONCURRENCIA = 4; // cuántas OT se procesan al mismo tiempo
   try{
     const ots = Object.keys(lotesOT).filter(ot => !['error','importado','omitida'].includes(lotesOT[ot].estado));
-    for(let i = 0; i < ots.length; i++){
-      btn.textContent = `Importando ${i+1}/${ots.length}...`;
-      await importarUnaOt(ots[i]);
+    let terminadas = 0;
+    // Procesamos en tandas de N OT en paralelo, en vez de una por una
+    for(let i = 0; i < ots.length; i += CONCURRENCIA){
+      const tanda = ots.slice(i, i + CONCURRENCIA);
+      btn.textContent = `Importando ${terminadas}/${ots.length}... (${tanda.length} en paralelo)`;
+      await Promise.all(tanda.map(ot => importarUnaOt(ot)));
+      terminadas += tanda.length;
     }
     alert('Proceso terminado. Revisa el resumen de cada OT para confirmar que todas quedaron importadas correctamente.');
   } finally {
