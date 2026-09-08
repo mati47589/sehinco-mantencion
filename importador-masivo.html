@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Importador masivo de OT — SEHINCO</title>
+<style>
+  :root{
+    --bg:#F2F3F5; --surface:#FFFFFF; --surface-2:#EEF0F3; --surface-3:#E4E7EB;
+    --border:#DDE1E6; --border-strong:#C6CBD2;
+    --text:#181B1F; --text-dim:#4B5158; --text-faint:#6B7280;
+    --accent:#FF7A33; --accent-strong:#B84A00; --accent-dim:rgba(255,122,51,.14); --on-accent:#231400;
+    --brand:#0D7A54; --brand-dim:rgba(13,122,84,.12);
+    --danger:#D32F2F; --danger-dim:rgba(211,47,47,.10);
+    --radius:14px; --shadow:0 2px 10px rgba(20,24,28,.08);
+    --mono: ui-monospace,"SF Mono","Cascadia Code",monospace;
+    --sans: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); padding-bottom:80px; }
+  .wrap{ max-width:960px; margin:0 auto; padding:20px 16px 60px; }
+  header{ padding:6px 0 18px; border-bottom:1px solid var(--border); margin-bottom:20px; }
+  header h1{ font-size:19px; margin:0 0 4px; }
+  header p{ margin:0; font-size:13px; color:var(--text-dim); line-height:1.6; }
+  .card{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:18px; margin-bottom:16px; box-shadow:var(--shadow); }
+  .card h2{ font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--text-dim); margin:0 0 12px; font-family:var(--mono); }
+  label{ font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; font-family:var(--mono); font-weight:700; display:block; margin-bottom:4px; }
+  input[type=text], input[type=password], textarea{
+    background:var(--surface-2); border:1px solid var(--border-strong); color:var(--text); border-radius:8px;
+    padding:9px 10px; font-size:13.5px; width:100%; font-family:var(--mono);
+  }
+  textarea{ font-family:var(--sans); min-height:60px; resize:vertical; }
+  button{ font-family:var(--sans); font-weight:700; border-radius:9px; border:none; padding:11px 18px; cursor:pointer; font-size:14px; }
+  .btn-primary{ background:var(--accent); color:var(--on-accent); }
+  .btn-primary:disabled{ background:var(--surface-3); color:var(--text-faint); cursor:not-allowed; }
+  .btn-secondary{ background:var(--surface-2); color:var(--text); border:1px solid var(--border-strong); }
+  .btn-mini{ padding:6px 11px; font-size:12px; }
+  .row{ display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+  .row > div{ flex:1; min-width:160px; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .grid3{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+  .field{ margin-bottom:10px; }
+  .hint{ font-size:12.5px; color:var(--text-faint); line-height:1.6; margin-top:6px; }
+  #adminGate{ max-width:380px; margin:80px auto; text-align:center; }
+  #adminGate h1{ font-size:17px; }
+
+  .dropzone{
+    border:2px dashed var(--border-strong); border-radius:var(--radius); padding:32px 16px; text-align:center;
+    cursor:pointer; color:var(--text-dim); font-size:14px; background:var(--surface-2);
+  }
+  .dropzone.drag{ border-color:var(--accent); background:var(--accent-dim); }
+  .dropzone input{ display:none; }
+
+  .ot-summary{ border:1px solid var(--border); border-radius:12px; margin-bottom:12px; overflow:hidden; }
+  .ot-summary-head{ display:flex; align-items:center; justify-content:space-between; padding:13px 15px; background:var(--surface-2); cursor:pointer; gap:10px; flex-wrap:wrap; }
+  .ot-summary-head .ot-title{ font-weight:800; font-family:var(--mono); }
+  .ot-summary-head .ot-sub{ font-size:12.5px; color:var(--text-dim); }
+  .ot-summary-body{ padding:16px; display:none; }
+  .ot-summary-body.open{ display:block; }
+  .badge{ font-family:var(--mono); font-size:10px; padding:3px 8px; border-radius:6px; font-weight:700; text-transform:uppercase; }
+  .badge.ok{ background:var(--brand-dim); color:var(--brand); }
+  .badge.warn{ background:var(--accent-dim); color:var(--accent-strong); }
+  .badge.err{ background:var(--danger-dim); color:var(--danger); }
+  .badge.pending{ background:var(--surface-3); color:var(--text-faint); }
+
+  .comp-cols{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .comp-box{ border:1px solid var(--border); border-radius:10px; padding:12px; }
+  .comp-box h3{ font-size:12px; text-transform:uppercase; color:var(--accent-strong); margin:0 0 10px; font-family:var(--mono); }
+  .comp-box .field label{ font-size:9.5px; }
+  .comp-box .field input{ font-size:12.5px; padding:7px 8px; }
+
+  .repuesto-mini{ display:grid; grid-template-columns:1.2fr 2fr 60px 34px; gap:6px; margin-bottom:6px; align-items:center; }
+  .repuesto-mini input{ font-size:12.5px; padding:6px 7px; }
+  .del-mini{ background:none; border:none; color:var(--text-faint); cursor:pointer; font-size:16px; }
+
+  .status-line{ font-size:12.5px; color:var(--text-dim); margin-top:10px; font-family:var(--mono); white-space:pre-wrap; }
+  .status-line.ok{ color:var(--brand); }
+  .status-line.err{ color:var(--danger); }
+  .subhead{ font-family:var(--mono); font-size:10.5px; color:var(--accent-strong); text-transform:uppercase; letter-spacing:.05em; margin:12px 0 6px; font-weight:800; }
+  .footer-actions{ position:sticky; bottom:0; background:var(--bg); padding:14px 0; border-top:1px solid var(--border); margin-top:16px; display:flex; gap:10px; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+
+<div id="adminGate">
+  <div class="wrap">
+    <h1>Importador masivo de OT</h1>
+    <p class="hint">Herramienta administrativa — corre en tu navegador, no consume mensajes de Claude. Ingresa la contraseña de administrador para continuar.</p>
+    <input type="password" id="gatePass" placeholder="Contraseña" style="margin:14px 0;">
+    <button class="btn-primary" onclick="checkGate()">Entrar</button>
+    <div id="gateError" style="color:var(--danger); font-size:13px; margin-top:10px;"></div>
+  </div>
+</div>
+
+<div class="wrap" id="mainApp" style="display:none;">
+  <header>
+    <h1>Importador masivo de OT antiguas</h1>
+    <p>
+      Selecciona la <b>carpeta que contiene una subcarpeta por cada OT</b> (con sus 3 PDF y las fotos adentro).
+      El programa lee cada PDF automáticamente y arma la información para subir a Supabase — pero
+      <b>siempre revisa el resumen de cada OT antes de confirmar</b>, por si algún dato quedó mal leído.
+    </p>
+  </header>
+
+  <div class="card">
+    <h2>01 · Configuración de Supabase</h2>
+    <div class="grid2">
+      <div class="field"><label>Project URL</label><input type="text" id="cfgUrl" value="https://ugyccveqizlxretavaiq.supabase.co"></div>
+      <div class="field"><label>Publishable key</label><input type="text" id="cfgKey" value="sb_publishable_a7Qk4LRW5UGQ6VY3QzRydw_v-MizUFw"></div>
+    </div>
+    <div class="hint">Ya vienen precargadas las de Sehinco — normalmente no necesitas tocar esto.</div>
+  </div>
+
+  <div class="card">
+    <h2>02 · Seleccionar carpeta con las OT</h2>
+    <div class="dropzone" id="dropzone">
+      <div>Toca para elegir la carpeta principal (la que contiene una subcarpeta por cada OT)</div>
+      <div class="hint">Estructura esperada: Carpeta principal → OT 23449 → (3 PDF + fotos), OT 23450 → (3 PDF + fotos), etc. El nombre de la subcarpeta no importa, el número de OT se detecta desde el nombre de los archivos PDF.</div>
+      <input type="file" id="folderInput" webkitdirectory directory multiple>
+    </div>
+    <div class="status-line" id="scanStatus"></div>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none;">
+    <h2>03 · Revisar cada OT antes de importar</h2>
+    <div id="otList"></div>
+  </div>
+
+  <div class="footer-actions" id="footerActions" style="display:none;">
+    <button class="btn-primary" id="btnImportarTodo" onclick="importarTodo()">Importar todas las OT revisadas</button>
+    <button class="btn-secondary" onclick="location.reload()">Empezar de nuevo</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   CONFIGURACIÓN Y ACCESO
+   ============================================================ */
+let CONFIG = { ADMIN_PASSWORD: 'sehinco2026', STORAGE_BUCKET: 'fotos-ot' };
+let sb = null;
+
+function checkGate(){
+  const val = document.getElementById('gatePass').value;
+  if(val === CONFIG.ADMIN_PASSWORD){
+    document.getElementById('adminGate').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'block';
+    sb = window.supabase.createClient(document.getElementById('cfgUrl').value, document.getElementById('cfgKey').value);
+  }else{
+    document.getElementById('gateError').textContent = 'Contraseña incorrecta.';
+  }
+}
+document.getElementById('gatePass').addEventListener('keydown', e => { if(e.key==='Enter') checkGate(); });
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+/* ============================================================
+   LECTURA DE PDF CON RECONSTRUCCIÓN DE FILAS/COLUMNAS
+   ============================================================ */
+async function leerPdfComoFilas(file){
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({data: buf}).promise;
+  const maxPages = Math.min(doc.numPages, 4);
+  const filas = [];
+  for(let p = 1; p <= maxPages; p++){
+    const page = await doc.getPage(p);
+    const content = await page.getTextContent();
+    const items = content.items
+      .filter(it => it.str && it.str.trim())
+      .map(it => ({ str: it.str, x: it.transform[4], y: Math.round(it.transform[5]) }));
+    // Agrupar en filas por Y (con tolerancia)
+    const grupos = [];
+    for(const it of items){
+      let g = grupos.find(g => Math.abs(g.y - it.y) <= 2);
+      if(!g){ g = {y: it.y, items: []}; grupos.push(g); }
+      g.items.push(it);
+    }
+    grupos.sort((a,b) => b.y - a.y);
+    for(const g of grupos){
+      g.items.sort((a,b) => a.x - b.x);
+      filas.push(g.items);
+    }
+  }
+  return filas; // array de filas; cada fila es un array de {str, x}
+}
+
+// Une los textos de una fila en un solo string (ignora columnas, útil para detectar títulos)
+function filaTexto(fila){ return fila.map(i => i.str).join(' ').replace(/\s+/g,' ').trim(); }
+
+/* ============================================================
+   DICCIONARIO DE ETIQUETAS CONOCIDAS (formato fijo de Sehinco)
+   Se usan para trocear cada fila en label -> valor, sin depender
+   de coordenadas exactas de columna.
+   ============================================================ */
+const ETIQUETAS_INGRESO = [
+  'GUIA DE DESPACHO CLIENTE','COTIZACION N','CLIENTE','FECHA',
+  'DIAGNOSTICO INICIAL','CODIGO / N EQUIPO','MAESTRO ASIGNADO','DESCRIPCION',
+  'RODAMIENTO MOTOR','RODAMIENTO REDUCTOR','RETENES REDUCTOR','RETENES',
+  'TIPO ACOPLAMIENTO','EQUIPO','USO','MARCA','MODELO','SERIE','POTENCIA','CORRIENTE','RPM',
+  'VOLTAJE','FRECUENCIA','SELLO MEC.','IMPULSOR','DIAMETRO DEL IMPULSOR','SELLO CUERPO BBA.',
+  "O'RING N","O RING N",'MEDIDA TUERCA IMPULSOR','OBSERVACION',
+  'DIAM. SUCCION','DIAM. DESCARGA','ALTURA','LUBRICANTE','CANT. LUBRIC.'
+].sort((a,b)=>b.length-a.length); // más largas primero, para no confundir "RETENES" con "RETENES REDUCTOR"
+
+function normalizarClave(s){
+  return s.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[°ºª]/g,'').replace(/\s+/g,' ').trim();
+}
+
+// Trocea el texto de una fila en pares [etiqueta, valor, etiqueta, valor...]
+// usando el diccionario de etiquetas conocidas.
+function trocearFila(textoFila, diccionario){
+  const texto = normalizarClave(textoFila);
+  const original = textoFila;
+  const hallazgos = [];
+  for(const etq of diccionario){
+    const idx = texto.indexOf(normalizarClave(etq));
+    if(idx !== -1) hallazgos.push({ etq, idx });
+  }
+  hallazgos.sort((a,b) => a.idx - b.idx);
+  // Quitar solapes (si una etiqueta larga ya cubre el mismo punto que otra corta)
+  const limpios = [];
+  for(const h of hallazgos){
+    if(!limpios.some(l => h.idx >= l.idx && h.idx < l.idx + normalizarClave(l.etq).length)){
+      limpios.push(h);
+    }
+  }
+  if(limpios.length === 0) return [];
+  const partes = [];
+  for(let i = 0; i < limpios.length; i++){
+    const inicio = limpios[i].idx + normalizarClave(limpios[i].etq).length;
+    const fin = i + 1 < limpios.length ? limpios[i+1].idx : texto.length;
+    // Extraer el fragmento correspondiente del texto ORIGINAL (no normalizado) por proporción de índice
+    const valor = original.slice(inicio, fin).trim().replace(/^[:\-–]\s*/,'');
+    partes.push({ etiqueta: limpios[i].etq, valor: valor === '(Q)' ? '' : valor });
+  }
+  return partes;
+}
+
+/* ============================================================
+   PARSEO DE "DATOS DE INGRESO"
+   ============================================================ */
+async function parsearDatosIngreso(file){
+  const filas = await leerPdfComoFilas(file);
+  const datos = { ot:'', cliente:'', equipoGeneral:'', fecha:'', guia:'', cot:'',
+    motor:{}, bomba:{} };
+
+  for(const fila of filas){
+    const texto = filaTexto(fila);
+    const up = normalizarClave(texto);
+
+    // O.T. N°
+    let m = texto.match(/O\.?T\.?\s*N[°º]?\s*:?\s*(\d{3,7})/i);
+    if(m) datos.ot = m[1];
+
+    if(up.startsWith('CLIENTE') && !datos.cliente){
+      datos.cliente = texto.replace(/^CLIENTE/i,'').trim();
+      continue;
+    }
+    if(up.startsWith('FECHA') && !datos.fecha){
+      const fm = texto.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if(fm) datos.fecha = `${fm[3]}-${fm[2].padStart(2,'0')}-${fm[1].padStart(2,'0')}`;
+      continue;
+    }
+    if(up.startsWith('GUIA DE DESPACHO')){
+      datos.guia = texto.replace(/^GUIA DE DESPACHO CLIENTE/i,'').trim();
+      continue;
+    }
+    if(up.startsWith('COTIZACION')){
+      datos.cot = texto.replace(/^COTIZACION N[°º]?/i,'').trim();
+      continue;
+    }
+    // La fila superior "EQUIPO   MOTOBOMBA" (antes de llegar a la tabla motor/bomba) define el equipo general
+    if(up === 'EQUIPO' || (up.startsWith('EQUIPO') && !datos.equipoGeneral && fila.length <= 3)){
+      const val = texto.replace(/^EQUIPO/i,'').trim();
+      if(val && !datos.equipoGeneral) datos.equipoGeneral = val;
+    }
+
+    // Filas con 2 o más pares etiqueta/valor -> estas son las de la tabla Motor/Bomba
+    const partes = trocearFila(texto, ETIQUETAS_INGRESO);
+    if(partes.length >= 1){
+      // Si la fila tiene UNA etiqueta con potencialmente dos valores (motor/bomba) separados por
+      // muchos espacios en el texto original, tratamos de separarlos por posición de columnas.
+      for(const p of partes){
+        asignarCampo(datos, p.etiqueta, p.valor, fila, texto);
+      }
+    }
+  }
+  return datos;
+}
+
+// Mapa de qué campo del componente corresponde cada etiqueta
+const CAMPO_MOTOR_BOMBA = {
+  'EQUIPO':'equipo', 'USO':'uso', 'MARCA':'marca', 'MODELO':'modelo', 'SERIE':'serie',
+  'POTENCIA':'potencia', 'CORRIENTE':'corriente', 'RPM':'rpm',
+  'RODAMIENTO MOTOR':'rodamiento', 'RETENES':'retenes',
+  'VOLTAJE':'voltaje', 'FRECUENCIA':'frecuencia',
+  "SELLO MEC.":'selloMecanico', 'IMPULSOR':'impulsor', 'DIAMETRO DEL IMPULSOR':'diamImpulsor',
+  'MEDIDA TUERCA IMPULSOR':'medidaTuerca'
+};
+
+function asignarCampo(datos, etiqueta, valor, fila, textoCompleto){
+  if(!valor) return;
+  const campo = CAMPO_MOTOR_BOMBA[etiqueta];
+  if(campo){
+    // Según la convención de Sehinco: Sello Mecánico, Impulsor, Diámetro impulsor y Medida
+    // tuerca impulsor siempre van en MOTOR (aunque en el PDF aparezcan del lado derecho).
+    const siempreMotor = ['selloMecanico','impulsor','diamImpulsor','medidaTuerca'];
+    if(siempreMotor.includes(campo)){
+      datos.motor[campo] = valor;
+      return;
+    }
+    // Si hay dos valores en la misma fila (Motor y Bomba con datos distintos), separar por
+    // el doble espacio más ancho del texto original.
+    const dobles = textoCompleto.split(/\s{3,}/).filter(Boolean);
+    if(dobles.length >= 2 && !datos.motor[campo]){
+      datos.motor[campo] = dobles[dobles.length - 2] || valor;
+      datos.bomba[campo] = dobles[dobles.length - 1] || '';
+    }else{
+      if(!datos.motor[campo]) datos.motor[campo] = valor;
+      else if(!datos.bomba[campo]) datos.bomba[campo] = valor;
+    }
+  }
+  if(etiqueta === "O'RING N" || etiqueta === 'O RING N'){ datos.motor.selloCuerpoOring = valor; }
+  if(etiqueta === 'RODAMIENTO REDUCTOR'){ datos.motor.rodamientoReductor = valor; }
+  if(etiqueta === 'RETENES REDUCTOR'){ datos.motor.retenesReductor = valor; }
+  if(etiqueta === 'DIAGNOSTICO INICIAL' && !datos.diagnosticoInicial){ datos.diagnosticoInicial = valor; }
+  if(etiqueta === 'OBSERVACION'){ datos.observacionGeneral = valor; }
+}
+
+/* ============================================================
+   PARSEO DE "INFORME DE MANTENIMIENTO" (repuestos, trabajo, conclusión)
+   ============================================================ */
+async function parsearInforme(file){
+  const filas = await leerPdfComoFilas(file);
+  const texto = filas.map(filaTexto).join('\n');
+  const datos = { repuestos: [], descripcionTrabajo:'', conclusion:'', sugerencia:'' };
+
+  // Repuestos: líneas entre "R E P U E S T O S" (o "REPUESTOS") y "INFORMACION COMPLEMENTARIA"
+  const repMatch = texto.match(/R\s*E\s*P\s*U\s*E\s*S\s*T\s*O\s*S([\s\S]*?)(INFORMACION|DESCRIPCION DEL TRABAJO)/i);
+  if(repMatch){
+    const lineas = repMatch[1].split('\n').map(l=>l.trim()).filter(Boolean);
+    for(const l of lineas){
+      if(/componentes/i.test(l) || /descripci/i.test(l) || /cantidad/i.test(l)) continue;
+      const m = l.match(/^(.+?)\s{2,}(.+?)\s+(\d+)\s*$/);
+      if(m) datos.repuestos.push({ componente: m[1].trim(), descripcion: m[2].trim(), cantidad: m[3].trim() });
+    }
+  }
+  // Descripción del trabajo
+  const trabajoMatch = texto.match(/DESCRIPCION DEL TRABAJO([\s\S]*?)(PREPARADO POR|$)/i);
+  if(trabajoMatch) datos.descripcionTrabajo = trabajoMatch[1].replace(/\n/g,' ').trim();
+
+  return datos;
+}
+
+async function parsearConclusion(file){
+  const filas = await leerPdfComoFilas(file);
+  const texto = filas.map(filaTexto).join('\n');
+  const datos = { conclusion:'', sugerencia:'' };
+  const concMatch = texto.match(/CONCLUSION:?([\s\S]*?)(NOTA:|SUGERENCIA:|$)/i);
+  if(concMatch) datos.conclusion = concMatch[1].replace(/\n/g,' ').trim();
+  const sugMatch = texto.match(/SUGERENCIA:?([\s\S]*?)(MEDIDA ADICIONAL|OBSERVACION|$)/i);
+  if(sugMatch) datos.sugerencia = sugMatch[1].replace(/\n/g,' ').trim();
+  return datos;
+}
+
+/* ============================================================
+   PARSEO DE "GUIA DE MANTENCION ELECTRICA"
+   ============================================================ */
+async function parsearElectrico(file){
+  const filas = await leerPdfComoFilas(file);
+  const texto = filas.map(filaTexto).join('\n');
+  const datos = { aplica:true, conexion:'ESTRELLA', u1u2:'', v1v2:'', w1w2:'', r:'', s:'', t:'', concBobinado:'', concPlaca:'' };
+  if(/ESTRELLA/i.test(texto)) datos.conexion = 'ESTRELLA';
+  if(/DELTA|TRIANGULO/i.test(texto)) datos.conexion = 'DELTA';
+  let m = texto.match(/U1\s*-\s*U2\s+([\d.,]+)/i); if(m) datos.u1u2 = m[1];
+  m = texto.match(/V1\s*-\s*V2\s+([\d.,]+)/i); if(m) datos.v1v2 = m[1];
+  m = texto.match(/W1\s*-\s*W2\s+([\d.,]+)/i); if(m) datos.w1w2 = m[1];
+  m = texto.match(/\bR\s+([\d.,]+\s*AMP)/i); if(m) datos.r = m[1];
+  m = texto.match(/\bS\s+([\d.,]+\s*AMP)/i); if(m) datos.s = m[1];
+  m = texto.match(/\bT\s+([\d.,]+\s*AMP)/i); if(m) datos.t = m[1];
+  datos.concBobinado = /ESTADO DE BOBINADO[\s\S]{0,40}X/i.test(texto) ? 'Bueno' : '';
+  datos.concPlaca = /PLACA DE BORNE[\s\S]{0,40}X/i.test(texto) ? 'Bueno' : '';
+  return datos;
+}
+
+/* ============================================================
+   AGRUPAR ARCHIVOS POR OT Y PROCESAR
+   ============================================================ */
+let lotesOT = {}; // { '23449': { archivos:{datos,informe,conclusion,electrico,fotos:[]}, datos:{...}, estado:'' } }
+
+function sanitizarNombre(texto){
+  return (texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'_').replace(/^_+|_+$/g,'').toUpperCase();
+}
+
+function detectarOTDesdeNombre(filename){
+  const m = filename.match(/OT[_\s-]?(\d{4,7})/i) || filename.match(/(\d{4,7})/);
+  return m ? m[1] : null;
+}
+
+function tipoDePdf(filename){
+  const f = filename.toUpperCase();
+  if(f.includes('DATOS') && f.includes('INGRES')) return 'datos';
+  if(f.includes('MTTO') || f.includes('ELECTRIC') || f.includes('ELÉCTRIC')) return 'electrico';
+  if(f.includes('INFORME') && !f.includes('MTTO')) return 'informe';
+  return null;
+}
+
+document.getElementById('folderInput').addEventListener('change', async (e) => {
+  await procesarArchivos(e.target.files);
+});
+const dz = document.getElementById('dropzone');
+dz.addEventListener('click', () => document.getElementById('folderInput').click());
+
+async function procesarArchivos(fileList){
+  const statusEl = document.getElementById('scanStatus');
+  statusEl.textContent = 'Agrupando archivos por OT...';
+  lotesOT = {};
+
+  for(const file of fileList){
+    const otDetectada = detectarOTDesdeNombre(file.name);
+    if(!otDetectada) continue;
+    if(!lotesOT[otDetectada]) lotesOT[otDetectada] = { archivos:{fotos:[]}, datos:null, estado:'pendiente' };
+    if(file.type.startsWith('image/')){
+      lotesOT[otDetectada].archivos.fotos.push(file);
+    }else if(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')){
+      const tipo = tipoDePdf(file.name);
+      if(tipo === 'datos') lotesOT[otDetectada].archivos.datos = file;
+      else if(tipo === 'informe') lotesOT[otDetectada].archivos.informe = file;
+      else if(tipo === 'electrico') lotesOT[otDetectada].archivos.electrico = file;
+    }
+  }
+
+  const otKeys = Object.keys(lotesOT);
+  if(otKeys.length === 0){
+    statusEl.className = 'status-line err';
+    statusEl.textContent = 'No se detectó ninguna OT en los archivos seleccionados. Revisa que los nombres de archivo incluyan el número de OT.';
+    return;
+  }
+
+  document.getElementById('resultsCard').style.display = 'block';
+  document.getElementById('footerActions').style.display = 'flex';
+  const listEl = document.getElementById('otList');
+  listEl.innerHTML = '';
+
+  for(let idx = 0; idx < otKeys.length; idx++){
+    const ot = otKeys[idx];
+    statusEl.className = 'status-line';
+    statusEl.textContent = `Leyendo OT ${ot} (${idx+1}/${otKeys.length})...`;
+    const lote = lotesOT[ot];
+    try{
+      const datosIngreso = lote.archivos.datos ? await parsearDatosIngreso(lote.archivos.datos) : { ot, motor:{}, bomba:{} };
+      const informe = lote.archivos.informe ? await parsearInforme(lote.archivos.informe) : { repuestos:[], descripcionTrabajo:'' };
+      const conclusionData = lote.archivos.informe ? await parsearConclusion(lote.archivos.informe) : { conclusion:'', sugerencia:'' };
+      const electrico = lote.archivos.electrico ? await parsearElectrico(lote.archivos.electrico) : null;
+      lote.datos = {
+        ot: datosIngreso.ot || ot,
+        cliente: datosIngreso.cliente || '',
+        equipoGeneral: datosIngreso.equipoGeneral || '',
+        fecha: datosIngreso.fecha || '',
+        guia: datosIngreso.guia || '',
+        cot: datosIngreso.cot || '',
+        motor: datosIngreso.motor || {},
+        bomba: datosIngreso.bomba || {},
+        repuestos: informe.repuestos || [],
+        descripcionTrabajo: informe.descripcionTrabajo || '',
+        conclusion: conclusionData.conclusion || '',
+        sugerencia: conclusionData.sugerencia || '',
+        observacionGeneral: datosIngreso.observacionGeneral || '',
+        aplicaElectrica: !!lote.archivos.electrico,
+        electrico: electrico
+      };
+      lote.estado = 'leido';
+    }catch(err){
+      console.error(err);
+      lote.estado = 'error';
+      lote.error = err.message;
+    }
+    renderOtSummary(ot);
+  }
+  statusEl.className = 'status-line ok';
+  statusEl.textContent = `Listo — se detectaron ${otKeys.length} OT. Revisa cada una antes de importar.`;
+}
+
+function renderOtSummary(ot){
+  const lote = lotesOT[ot];
+  let el = document.getElementById('ot_' + ot);
+  const yaExiste = !!el;
+  if(!yaExiste){
+    el = document.createElement('div');
+    el.className = 'ot-summary';
+    el.id = 'ot_' + ot;
+    document.getElementById('otList').appendChild(el);
+  }
+  const d = lote.datos || {};
+  const badge = lote.estado === 'error' ? '<span class="badge err">Error de lectura</span>'
+    : lote.estado === 'importado' ? '<span class="badge ok">Importado ✓</span>'
+    : '<span class="badge warn">Revisar</span>';
+  el.innerHTML = `
+    <div class="ot-summary-head" onclick="toggleOt('${ot}')">
+      <div><span class="ot-title">OT ${ot}</span> <span class="ot-sub">${d.cliente || 'Sin cliente detectado'}</span></div>
+      <div>${badge} <span class="badge pending">${lote.archivos.fotos.length} foto(s)</span></div>
+    </div>
+    <div class="ot-summary-body" id="ot_body_${ot}">
+      ${lote.estado === 'error' ? `<p style="color:var(--danger);">Error al leer los PDF: ${lote.error}</p>` : renderFormularioOt(ot, d)}
+    </div>
+  `;
+}
+
+function toggleOt(ot){
+  document.getElementById('ot_body_' + ot).classList.toggle('open');
+}
+
+function renderFormularioOt(ot, d){
+  const m = d.motor || {}, b = d.bomba || {};
+  return `
+    <div class="grid3">
+      <div class="field"><label>OT</label><input type="text" id="f_${ot}_ot" value="${d.ot||''}"></div>
+      <div class="field"><label>Cliente</label><input type="text" id="f_${ot}_cliente" value="${(d.cliente||'').replace(/"/g,'&quot;')}"></div>
+      <div class="field"><label>Fecha (YYYY-MM-DD)</label><input type="text" id="f_${ot}_fecha" value="${d.fecha||''}"></div>
+      <div class="field"><label>Equipo general</label><input type="text" id="f_${ot}_equipo" value="${(d.equipoGeneral||'').replace(/"/g,'&quot;')}"></div>
+      <div class="field"><label>Guía despacho</label><input type="text" id="f_${ot}_guia" value="${d.guia||''}"></div>
+      <div class="field"><label>Cotización</label><input type="text" id="f_${ot}_cot" value="${d.cot||''}"></div>
+    </div>
+
+    <div class="subhead">Componentes</div>
+    <div class="comp-cols">
+      <div class="comp-box">
+        <h3>Motor</h3>
+        ${camposComponente(ot, 'motor', m)}
+      </div>
+      <div class="comp-box">
+        <h3>Bomba</h3>
+        ${camposComponente(ot, 'bomba', b)}
+      </div>
+    </div>
+
+    <div class="subhead">Repuestos detectados</div>
+    <div id="rep_${ot}">${(d.repuestos||[]).map((r,i) => repuestoRow(ot,i,r)).join('') || '<div class="hint">No se detectaron repuestos automáticamente — agrégalos a mano si corresponde.</div>'}</div>
+
+    <div class="subhead">Trabajo y conclusión</div>
+    <div class="field"><label>Descripción del trabajo</label><textarea id="f_${ot}_trabajo">${d.descripcionTrabajo||''}</textarea></div>
+    <div class="field"><label>Conclusión</label><textarea id="f_${ot}_conclusion">${d.conclusion||''}</textarea></div>
+    <div class="field"><label>Sugerencia</label><textarea id="f_${ot}_sugerencia">${d.sugerencia||'REALIZAR MANTENIMIENTO PREVENTIVO ANUAL'}</textarea></div>
+    <div class="field"><label>Observación general</label><textarea id="f_${ot}_obs">${d.observacionGeneral||''}</textarea></div>
+
+    ${d.aplicaElectrica ? `
+    <div class="subhead">Mantención eléctrica (detectada)</div>
+    <div class="grid3">
+      <div class="field"><label>Conexión</label><input type="text" id="f_${ot}_conexion" value="${d.electrico?.conexion||'ESTRELLA'}"></div>
+      <div class="field"><label>R / S / T (Amp)</label><input type="text" id="f_${ot}_rst" value="${[d.electrico?.r,d.electrico?.s,d.electrico?.t].filter(Boolean).join(' / ')}"></div>
+      <div class="field"><label>Conclusión bobinado</label><input type="text" id="f_${ot}_concbob" value="${d.electrico?.concBobinado||''}"></div>
+    </div>
+    <div class="hint">Los valores numéricos de la tabla de aislación no se extraen automáticamente — revísalos en el PDF si son relevantes y agrégalos manualmente después en la app si hace falta.</div>
+    ` : '<div class="hint">No se detectó guía de mantención eléctrica para esta OT.</div>'}
+
+    <div class="subhead">Fotos detectadas</div>
+    <div class="hint">${lotesOT[ot].archivos.fotos.length} archivo(s) de imagen en esta carpeta — se subirán automáticamente al importar, usando el mismo sistema de nombres numerados que ya usas.</div>
+
+    <div class="row" style="margin-top:14px;">
+      <button class="btn-primary btn-mini" onclick="importarUnaOt('${ot}')">Importar solo esta OT</button>
+    </div>
+    <div class="status-line" id="status_${ot}"></div>
+  `;
+}
+
+function camposComponente(ot, comp, datos){
+  const campos = [
+    ['Equipo','equipo'],['Uso','uso'],['Marca','marca'],['Modelo','modelo'],['Serie','serie'],
+    ['Potencia','potencia'],['Corriente','corriente'],['Voltaje','voltaje'],['Frecuencia','frecuencia'],['RPM','rpm'],
+    ['Rodamiento','rodamiento'],['Rod. reductor','rodamientoReductor'],['Retenes','retenes'],['Retenes reductor','retenesReductor'],
+    ['Sello mecánico','selloMecanico'],['Impulsor','impulsor'],['Diám. impulsor','diamImpulsor'],
+    ['O-Ring','selloCuerpoOring'],['Medida tuerca','medidaTuerca']
+  ];
+  return campos.map(([label,key]) => `
+    <div class="field"><label>${label}</label><input type="text" id="f_${ot}_${comp}_${key}" value="${(datos[key]||'').toString().replace(/"/g,'&quot;')}"></div>
+  `).join('');
+}
+
+function repuestoRow(ot, i, r){
+  return `<div class="repuesto-mini" id="rep_${ot}_${i}">
+    <input type="text" value="${(r.componente||'').replace(/"/g,'&quot;')}" placeholder="Componente">
+    <input type="text" value="${(r.descripcion||'').replace(/"/g,'&quot;')}" placeholder="Descripción">
+    <input type="text" value="${(r.cantidad||'').replace(/"/g,'&quot;')}" placeholder="Cant.">
+    <button class="del-mini" onclick="document.getElementById('rep_${ot}_${i}').remove()">✕</button>
+  </div>`;
+}
+
+/* ============================================================
+   LEER LOS VALORES CORREGIDOS DEL FORMULARIO DE REVISIÓN
+   ============================================================ */
+function leerFormularioOt(ot){
+  const v = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const campos = ['equipo','uso','marca','modelo','serie','potencia','corriente','voltaje','frecuencia','rpm',
+    'rodamiento','rodamientoReductor','retenes','retenesReductor','selloMecanico','impulsor','diamImpulsor','selloCuerpoOring','medidaTuerca'];
+  const motor = {}, bomba = {};
+  campos.forEach(c => { motor[c] = v(`f_${ot}_motor_${c}`); bomba[c] = v(`f_${ot}_bomba_${c}`); });
+
+  const repuestos = [];
+  document.querySelectorAll(`#rep_${ot} .repuesto-mini`).forEach(row => {
+    const inputs = row.querySelectorAll('input');
+    if(inputs[0].value.trim() || inputs[1].value.trim()){
+      repuestos.push({ componente: inputs[0].value.trim(), descripcion: inputs[1].value.trim(), cantidad: inputs[2].value.trim() });
+    }
+  });
+
+  return {
+    ot: v(`f_${ot}_ot`), cliente: v(`f_${ot}_cliente`), fecha: v(`f_${ot}_fecha`),
+    equipoGeneral: v(`f_${ot}_equipo`), guia: v(`f_${ot}_guia`), cot: v(`f_${ot}_cot`),
+    motor, bomba, repuestos,
+    descripcionTrabajo: v(`f_${ot}_trabajo`), conclusion: v(`f_${ot}_conclusion`), sugerencia: v(`f_${ot}_sugerencia`),
+    observacionGeneral: v(`f_${ot}_obs`),
+    aplicaElectrica: lotesOT[ot].datos.aplicaElectrica,
+    conexion: document.getElementById(`f_${ot}_conexion`) ? v(`f_${ot}_conexion`) : 'ESTRELLA'
+  };
+}
+
+/* ============================================================
+   IMPORTAR A SUPABASE
+   ============================================================ */
+function carpetaIngreso(datos){
+  const partes = [datos.fecha, sanitizarNombre(datos.cliente), 'OT'+sanitizarNombre(datos.ot)].filter(Boolean);
+  return partes.join('_');
+}
+
+async function importarUnaOt(ot){
+  const statusEl = document.getElementById(`status_${ot}`);
+  statusEl.className = 'status-line';
+  statusEl.textContent = 'Importando...';
+  try{
+    const datos = leerFormularioOt(ot);
+    if(!datos.ot){ throw new Error('Falta el número de OT'); }
+
+    const payload = {
+      ot: datos.ot, cot: datos.cot || null, cliente: datos.cliente, fecha: datos.fecha || null,
+      guia: datos.guia, diagnostico: datos.equipoGeneral,
+      descripcion_trabajo: datos.descripcionTrabajo, conclusion: datos.conclusion,
+      sugerencia: datos.sugerencia, obs_general: datos.observacionGeneral,
+      aplica_electrica: datos.aplicaElectrica,
+      electrica: datos.aplicaElectrica ? { conexion: datos.conexion || 'ESTRELLA' } : {},
+      check_in: [], check_out: []
+    };
+    const { data: ing, error: errIng } = await sb.from('ingresos').insert(payload).select().single();
+    if(errIng) throw errIng;
+    const ingresoId = ing.id;
+
+    const compPayload = (nombre, c) => ({
+      ingreso_id: ingresoId, nombre, equipo: c.equipo, uso: c.uso, marca: c.marca, modelo: c.modelo, serie: c.serie,
+      potencia: c.potencia, corriente: c.corriente, voltaje: c.voltaje, frecuencia: c.frecuencia, rpm: c.rpm,
+      rodamiento: c.rodamiento, rod_reductor: c.rodamientoReductor, retenes: c.retenes, retenes_reductor: c.retenesReductor,
+      sello_mecanico: c.selloMecanico, impulsor: c.impulsor, diam_impulsor: c.diamImpulsor,
+      sello_cuerpo_oring: c.selloCuerpoOring, medida_tuerca: c.medidaTuerca
+    });
+    const { error: errComp } = await sb.from('componentes').insert([compPayload('MOTOR', datos.motor), compPayload('BOMBA', datos.bomba)]);
+    if(errComp) throw errComp;
+
+    for(const r of datos.repuestos){
+      await sb.from('repuestos').insert({ ingreso_id: ingresoId, componente: r.componente, descripcion: r.descripcion, cantidad: r.cantidad });
+    }
+
+    // Fotos
+    const fotos = lotesOT[ot].archivos.fotos;
+    let fotosOk = 0;
+    for(let i = 0; i < fotos.length; i++){
+      const file = fotos[i];
+      const m = file.name.match(/^(\d+)(?:[_\-](\d+))?/);
+      const numero = m ? parseInt(m[1],10) : (100+i);
+      const esRepetida = /repetid/i.test(file.name) || numero === 99;
+      const etiqueta = esRepetida ? 'FOTO ADICIONAL — ' + sanitizarNombre(file.name) : etiquetaPorNumero(numero, datos.equipoGeneral || datos.motor.equipo);
+      try{
+        const ext = (file.name.split('.').pop()||'jpg').toLowerCase();
+        const nombreArchivo = `${numero}_${sanitizarNombre(etiqueta)}_OT${sanitizarNombre(datos.ot)}.${ext}`;
+        const path = `${carpetaIngreso(datos)}/${nombreArchivo}`;
+        const { error: upErr } = await sb.storage.from(CONFIG.STORAGE_BUCKET).upload(path, file, { upsert:true });
+        if(upErr) throw upErr;
+        await sb.from('fotos').insert({ ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero });
+        fotosOk++;
+      }catch(e){ console.error('foto', file.name, e); }
+    }
+
+    lotesOT[ot].estado = 'importado';
+    renderOtSummary(ot);
+    document.getElementById(`status_${ot}`).className = 'status-line ok';
+    document.getElementById(`status_${ot}`).textContent = `Importado ✓ (${fotosOk}/${fotos.length} fotos subidas)`;
+  }catch(err){
+    console.error(err);
+    statusEl.className = 'status-line err';
+    statusEl.textContent = 'Error: ' + (err.message || JSON.stringify(err));
+  }
+}
+
+function etiquetaPorNumero(n, equipoNombre){
+  const mapa = {1:'ANTES',2:'DESPUES',3:'CAJA ELECTRICA — ANTES',4:'CAJA ELECTRICA — DESPUES',
+    5:'EJE / ROTOR — ANTES',6:'EJE / ROTOR — DESPUES',7:'BOBINADO — ANTES',8:'BOBINADO — DESPUES',
+    9:'TAPAS MOTOR — ANTES',10:'TAPAS MOTOR — DESPUES',11:'PLACA MOTOR',12:'OT GRABADO EN EQUIPO'};
+  if(n === 1) return `${equipoNombre || 'EQUIPO'} — Antes`;
+  if(n === 2) return `${equipoNombre || 'EQUIPO'} — Después`;
+  return mapa[n] || ('FOTO ' + n);
+}
+
+async function importarTodo(){
+  const ots = Object.keys(lotesOT).filter(ot => lotesOT[ot].estado !== 'error' && lotesOT[ot].estado !== 'importado');
+  for(const ot of ots){
+    await importarUnaOt(ot);
+  }
+  alert('Proceso terminado. Revisa el resumen de cada OT para confirmar que todas quedaron importadas correctamente.');
+}
+</script>
+</body>
+</html>
