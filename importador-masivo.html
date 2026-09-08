@@ -76,6 +76,7 @@
   .status-line{ font-size:12.5px; color:var(--text-dim); margin-top:10px; font-family:var(--mono); white-space:pre-wrap; }
   .status-line.ok{ color:var(--brand); }
   .status-line.err{ color:var(--danger); }
+  .status-line.warn{ color:var(--accent-strong); }
   .subhead{ font-family:var(--mono); font-size:10.5px; color:var(--accent-strong); text-transform:uppercase; letter-spacing:.05em; margin:12px 0 6px; font-weight:800; }
   .footer-actions{ position:sticky; bottom:0; background:var(--bg); padding:14px 0; border-top:1px solid var(--border); margin-top:16px; display:flex; gap:10px; }
 </style>
@@ -531,6 +532,7 @@ function renderOtSummary(ot){
   const d = lote.datos || {};
   const badge = lote.estado === 'error' ? '<span class="badge err">Error de lectura</span>'
     : lote.estado === 'importado' ? '<span class="badge ok">Importado ✓</span>'
+    : lote.estado === 'omitida' ? '<span class="badge pending">Ya existía — omitida</span>'
     : '<span class="badge warn">Revisar</span>';
   el.innerHTML = `
     <div class="ot-summary-head" onclick="toggleOt('${ot}')">
@@ -660,13 +662,28 @@ function carpetaIngreso(datos){
 }
 
 async function importarUnaOt(ot){
+  const lote = lotesOT[ot];
+  if(lote.enProceso || lote.estado === 'importado') return; // evita duplicar si ya está en curso o ya se importó
+  lote.enProceso = true;
   const statusEl = document.getElementById(`status_${ot}`);
   statusEl.className = 'status-line';
-  statusEl.textContent = 'Importando...';
+  statusEl.textContent = 'Verificando si ya existe...';
   try{
     const datos = leerFormularioOt(ot);
     if(!datos.ot){ throw new Error('Falta el número de OT'); }
 
+    // Revisar si esta OT ya fue importada antes (en esta sesión o en una anterior) para no duplicarla
+    const { data: existente, error: errBuscar } = await sb.from('ingresos').select('id').eq('ot', datos.ot).limit(1);
+    if(errBuscar) throw errBuscar;
+    if(existente && existente.length){
+      lote.estado = 'omitida';
+      renderOtSummary(ot);
+      statusEl.className = 'status-line warn';
+      statusEl.textContent = `Omitida — la OT ${datos.ot} ya existe en la base de datos (no se duplicó).`;
+      return;
+    }
+
+    statusEl.textContent = 'Importando...';
     const payload = {
       ot: datos.ot, cot: datos.cot || null, cliente: datos.cliente, fecha: datos.fecha || null,
       guia: datos.guia, diagnostico: datos.equipoGeneral,
@@ -714,7 +731,7 @@ async function importarUnaOt(ot){
       }catch(e){ console.error('foto', file.name, e); }
     }
 
-    lotesOT[ot].estado = 'importado';
+    lote.estado = 'importado';
     renderOtSummary(ot);
     document.getElementById(`status_${ot}`).className = 'status-line ok';
     document.getElementById(`status_${ot}`).textContent = `Importado ✓ (${fotosOk}/${fotos.length} fotos subidas)`;
@@ -722,6 +739,8 @@ async function importarUnaOt(ot){
     console.error(err);
     statusEl.className = 'status-line err';
     statusEl.textContent = 'Error: ' + (err.message || JSON.stringify(err));
+  }finally{
+    lote.enProceso = false;
   }
 }
 
@@ -734,13 +753,27 @@ function etiquetaPorNumero(n, equipoNombre){
   return mapa[n] || ('FOTO ' + n);
 }
 
+let importacionEnCurso = false;
 async function importarTodo(){
-  const ots = Object.keys(lotesOT).filter(ot => lotesOT[ot].estado !== 'error' && lotesOT[ot].estado !== 'importado');
-  for(const ot of ots){
-    await importarUnaOt(ot);
+  if(importacionEnCurso) return; // evita que un doble clic dispare el proceso dos veces
+  importacionEnCurso = true;
+  const btn = document.getElementById('btnImportarTodo');
+  btn.disabled = true;
+  const textoOriginal = btn.textContent;
+  try{
+    const ots = Object.keys(lotesOT).filter(ot => !['error','importado','omitida'].includes(lotesOT[ot].estado));
+    for(let i = 0; i < ots.length; i++){
+      btn.textContent = `Importando ${i+1}/${ots.length}...`;
+      await importarUnaOt(ots[i]);
+    }
+    alert('Proceso terminado. Revisa el resumen de cada OT para confirmar que todas quedaron importadas correctamente.');
+  } finally {
+    importacionEnCurso = false;
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
   }
-  alert('Proceso terminado. Revisa el resumen de cada OT para confirmar que todas quedaron importadas correctamente.');
 }
 </script>
 </body>
+
 </html>
