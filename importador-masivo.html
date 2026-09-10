@@ -421,13 +421,36 @@ function parsearElectricoFilas(filas){
    ============================================================ */
 let lotesOT = {}; // { '23449': { archivos:{datos,informe,conclusion,electrico,fotos:[]}, datos:{...}, estado:'' } }
 
-function sanitizarNombre(texto){
-  return (texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'_').replace(/^_+|_+$/g,'').toUpperCase();
+// Reduce el tamaño de la foto antes de subirla (misma calidad visual, mucho menos peso
+// para transferir por internet — esto es lo que más acelera la subida real).
+function comprimirImagen(file, maxDim, calidad){
+  maxDim = maxDim || 1600;
+  calidad = calidad || 0.82;
+  return new Promise((resolve) => {
+    if(file.size < 350 * 1024){ resolve({ blob:file, esJpeg:false }); return; } // ya es chica, no vale la pena
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if(width > maxDim || height > maxDim){
+        if(width > height){ height = Math.round(height * maxDim / width); width = maxDim; }
+        else { width = Math.round(width * maxDim / height); height = maxDim; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob((blob) => {
+        URL.revokeObjectURL(url);
+        resolve(blob ? { blob, esJpeg:true } : { blob:file, esJpeg:false });
+      }, 'image/jpeg', calidad);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ blob:file, esJpeg:false }); };
+    img.src = url;
+  });
 }
 
-function detectarOTDesdeNombre(filename){
-  const m = filename.match(/OT[_\s-]?(\d{4,7})/i) || filename.match(/(\d{4,7})/);
-  return m ? m[1] : null;
+function sanitizarNombre(texto){
+  return (texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'_').replace(/^_+|_+$/g,'').toUpperCase();
 }
 
 document.getElementById('folderInput').addEventListener('change', async (e) => {
@@ -436,29 +459,43 @@ document.getElementById('folderInput').addEventListener('change', async (e) => {
 const dz = document.getElementById('dropzone');
 dz.addEventListener('click', () => document.getElementById('folderInput').click());
 
+// Detección ESTRICTA: solo cuenta si dice "OT" seguido del número (como los PDF de Sehinco).
+// A propósito NO busca cualquier número de 4-7 dígitos suelto en el nombre, porque eso
+// confundía fotos de cámara (con fecha/hora en el nombre) con números de OT distintos.
+function detectarOTDesdeNombreEstricto(filename){
+  const m = filename.match(/OT[_\s-]?(\d{4,7})/i);
+  return m ? m[1] : null;
+}
+
 async function procesarArchivos(fileList){
   const statusEl = document.getElementById('scanStatus');
   statusEl.textContent = 'Agrupando archivos por OT...';
   lotesOT = {};
+  const sinAsignar = [];
 
-  // Agrupamos por la carpeta (webkitRelativePath) cuando existe, y si no, por el número de OT
-  // detectado en el nombre del archivo. Todos los PDF de una misma OT se juntan en una sola
-  // lista — no importa si es 1 PDF combinado o varios separados, cada uno se revisa por su
-  // contenido para encontrar las secciones que traiga.
+  // La forma CONFIABLE de saber a qué OT pertenece una foto es la carpeta que la contiene
+  // (las fotos numeradas como "1_MOTOBOMBA_ANTES.jpg" no llevan el número de OT en su propio
+  // nombre). Por eso agrupamos SIEMPRE por la subcarpeta cuando existe, y solo si un archivo
+  // viene suelto (sin subcarpeta) intentamos leer el número de OT desde su nombre — y solo
+  // si es un PDF que lo menciona explícitamente como "OT_12345".
   for(const file of fileList){
     let clave = null;
     if(file.webkitRelativePath){
       const partes = file.webkitRelativePath.split('/');
-      if(partes.length > 2) clave = detectarOTDesdeNombre(partes[1]) || partes[1];
+      if(partes.length > 2) clave = partes[1]; // nombre de la subcarpeta, tal cual (sin adivinar)
     }
-    if(!clave) clave = detectarOTDesdeNombre(file.name);
-    if(!clave) continue;
+    if(!clave) clave = detectarOTDesdeNombreEstricto(file.name);
+    if(!clave){ sinAsignar.push(file.webkitRelativePath || file.name); continue; }
     if(!lotesOT[clave]) lotesOT[clave] = { archivos:{fotos:[], pdfs:[]}, datos:null, estado:'pendiente' };
     if(file.type.startsWith('image/')){
       lotesOT[clave].archivos.fotos.push(file);
     }else if(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')){
       lotesOT[clave].archivos.pdfs.push(file);
     }
+  }
+
+  if(sinAsignar.length){
+    console.warn('Archivos sin OT detectada (no se importarán):', sinAsignar);
   }
 
   const otKeys = Object.keys(lotesOT);
@@ -516,7 +553,9 @@ async function procesarArchivos(fileList){
     renderOtSummary(ot);
   }
   statusEl.className = 'status-line ok';
-  statusEl.textContent = `Listo — se detectaron ${otKeys.length} OT. Revisa cada una antes de importar.`;
+  statusEl.textContent = `Listo — se detectaron ${otKeys.length} OT.` +
+    (sinAsignar.length ? ` ⚠️ ${sinAsignar.length} archivo(s) no se pudieron agrupar a ninguna OT (revisa la consola del navegador para ver cuáles) — probablemente no estaban dentro de una subcarpeta.` : '') +
+    ` Revisa cada una antes de importar.`;
 }
 
 function renderOtSummary(ot){
@@ -534,13 +573,24 @@ function renderOtSummary(ot){
     : lote.estado === 'importado' ? '<span class="badge ok">Importado ✓</span>'
     : lote.estado === 'omitida' ? '<span class="badge pending">Ya existía — omitida</span>'
     : '<span class="badge warn">Revisar</span>';
+  let cuerpoHtml;
+  if(lote.estado === 'error'){
+    cuerpoHtml = `<p style="color:var(--danger);">Error al leer los PDF: ${lote.error}</p><div class="status-line" id="status_${ot}"></div>`;
+  }else{
+    try{
+      cuerpoHtml = renderFormularioOt(ot, d);
+    }catch(e){
+      console.error(`Error armando el formulario de revisión para OT ${ot}:`, e);
+      cuerpoHtml = `<p style="color:var(--danger);">No se pudo armar el resumen de esta OT (${e.message}). Puedes importarla manualmente revisando el PDF directamente.</p><div class="status-line" id="status_${ot}"></div>`;
+    }
+  }
   el.innerHTML = `
     <div class="ot-summary-head" onclick="toggleOt('${ot}')">
       <div><span class="ot-title">OT ${ot}</span> <span class="ot-sub">${d.cliente || 'Sin cliente detectado'}</span></div>
       <div>${badge} <span class="badge pending">${lote.archivos.fotos.length} foto(s)</span></div>
     </div>
     <div class="ot-summary-body" id="ot_body_${ot}">
-      ${lote.estado === 'error' ? `<p style="color:var(--danger);">Error al leer los PDF: ${lote.error}</p>` : renderFormularioOt(ot, d)}
+      ${cuerpoHtml}
     </div>
   `;
 }
@@ -665,9 +715,14 @@ async function importarUnaOt(ot){
   const lote = lotesOT[ot];
   if(lote.enProceso || lote.estado === 'importado') return; // evita duplicar si ya está en curso o ya se importó
   lote.enProceso = true;
-  const statusEl = document.getElementById(`status_${ot}`);
-  statusEl.className = 'status-line';
-  statusEl.textContent = 'Verificando si ya existe...';
+  // Actualizador de estado seguro: si por algún motivo el casillero visual de esta OT no
+  // existe en el HTML, esto NO debe tumbar el resto del proceso — solo se salta el aviso visual.
+  const setStatus = (clase, texto) => {
+    const el = document.getElementById(`status_${ot}`);
+    if(el){ el.className = 'status-line' + (clase ? ' ' + clase : ''); el.textContent = texto; }
+    else{ console.warn(`[OT ${ot}] (sin casillero visual) ${texto}`); }
+  };
+  setStatus('', 'Verificando si ya existe...');
   try{
     const datos = leerFormularioOt(ot);
     if(!datos.ot){ throw new Error('Falta el número de OT'); }
@@ -678,12 +733,11 @@ async function importarUnaOt(ot){
     if(existente && existente.length){
       lote.estado = 'omitida';
       renderOtSummary(ot);
-      statusEl.className = 'status-line warn';
-      statusEl.textContent = `Omitida — la OT ${datos.ot} ya existe en la base de datos (no se duplicó).`;
+      setStatus('warn', `Omitida — la OT ${datos.ot} ya existe en la base de datos (no se duplicó).`);
       return;
     }
 
-    statusEl.textContent = 'Importando...';
+    setStatus('', 'Importando...');
     const payload = {
       ot: datos.ot, cot: datos.cot || null, cliente: datos.cliente, fecha: datos.fecha || null,
       guia: datos.guia, diagnostico: datos.equipoGeneral,
@@ -714,19 +768,20 @@ async function importarUnaOt(ot){
       if(errRep) console.error('repuestos', errRep);
     }
 
-    // Fotos: se suben todas EN PARALELO (antes se subían de a una, esperando cada una)
+    // Fotos: se comprimen y se suben todas EN PARALELO
     const fotos = lotesOT[ot].archivos.fotos;
-    statusEl.textContent = `Subiendo ${fotos.length} foto(s) en paralelo...`;
+    setStatus('', `Comprimiendo y subiendo ${fotos.length} foto(s)...`);
     const subidas = await Promise.all(fotos.map(async (file, i) => {
       const m = file.name.match(/^(\d+)(?:[_\-](\d+))?/);
       const numero = m ? parseInt(m[1],10) : (100+i);
       const esRepetida = /repetid/i.test(file.name) || numero === 99;
       const etiqueta = esRepetida ? 'FOTO ADICIONAL — ' + sanitizarNombre(file.name) : etiquetaPorNumero(numero, datos.equipoGeneral || datos.motor.equipo);
       try{
-        const ext = (file.name.split('.').pop()||'jpg').toLowerCase();
+        const { blob, esJpeg } = await comprimirImagen(file);
+        const ext = esJpeg ? 'jpg' : (file.name.split('.').pop()||'jpg').toLowerCase();
         const nombreArchivo = `${numero}_${sanitizarNombre(etiqueta)}_OT${sanitizarNombre(datos.ot)}.${ext}`;
         const path = `${carpetaIngreso(datos)}/${nombreArchivo}`;
-        const { error: upErr } = await sb.storage.from(CONFIG.STORAGE_BUCKET).upload(path, file, { upsert:true });
+        const { error: upErr } = await sb.storage.from(CONFIG.STORAGE_BUCKET).upload(path, blob, { upsert:true, contentType: esJpeg ? 'image/jpeg' : (file.type || 'image/jpeg') });
         if(upErr) throw upErr;
         return { ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero };
       }catch(e){ console.error('foto', file.name, e); return null; }
@@ -740,12 +795,10 @@ async function importarUnaOt(ot){
 
     lote.estado = 'importado';
     renderOtSummary(ot);
-    document.getElementById(`status_${ot}`).className = 'status-line ok';
-    document.getElementById(`status_${ot}`).textContent = `Importado ✓ (${fotosOk}/${fotos.length} fotos subidas)`;
+    setStatus('ok', `Importado ✓ (${fotosOk}/${fotos.length} fotos subidas)`);
   }catch(err){
     console.error(err);
-    statusEl.className = 'status-line err';
-    statusEl.textContent = 'Error: ' + (err.message || JSON.stringify(err));
+    setStatus('err', 'Error: ' + (err.message || JSON.stringify(err)));
   }finally{
     lote.enProceso = false;
   }
@@ -767,7 +820,7 @@ async function importarTodo(){
   const btn = document.getElementById('btnImportarTodo');
   btn.disabled = true;
   const textoOriginal = btn.textContent;
-  const CONCURRENCIA = 4; // cuántas OT se procesan al mismo tiempo
+  const CONCURRENCIA = 6; // cuántas OT se procesan al mismo tiempo
   try{
     const ots = Object.keys(lotesOT).filter(ot => !['error','importado','omitida'].includes(lotesOT[ot].estado));
     let terminadas = 0;
@@ -775,7 +828,7 @@ async function importarTodo(){
     for(let i = 0; i < ots.length; i += CONCURRENCIA){
       const tanda = ots.slice(i, i + CONCURRENCIA);
       btn.textContent = `Importando ${terminadas}/${ots.length}... (${tanda.length} en paralelo)`;
-      await Promise.all(tanda.map(ot => importarUnaOt(ot)));
+      await Promise.allSettled(tanda.map(ot => importarUnaOt(ot)));
       terminadas += tanda.length;
     }
     alert('Proceso terminado. Revisa el resumen de cada OT para confirmar que todas quedaron importadas correctamente.');
