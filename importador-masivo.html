@@ -141,7 +141,24 @@
 /* ============================================================
    CONFIGURACIÓN Y ACCESO
    ============================================================ */
-let CONFIG = { ADMIN_PASSWORD: 'sehinco2026', STORAGE_BUCKET: 'fotos-ot' };
+let CONFIG = {
+  ADMIN_PASSWORD: 'sehinco2026', STORAGE_BUCKET: 'fotos-ot',
+  WORKER_URL: 'https://sehinco-fotos.mati4758.workers.dev',
+  UPLOAD_SECRET: 'b17294299c7c42c09b36c270d445be53'
+};
+
+// Sube un archivo/blob al Worker de Cloudflare (R2) en vez de a Supabase Storage.
+// `path` es la misma ruta relativa que antes se usaba como storage_path (ej. "2026-09_CLIENTE_OT12345/1_ANTES_OT12345.jpg").
+async function subirFotoAWorker(path, blob, contentType){
+  const url = CONFIG.WORKER_URL.replace(/\/$/,'') + '/' + path.split('/').map(encodeURIComponent).join('/');
+  const resp = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${CONFIG.UPLOAD_SECRET}`, 'Content-Type': contentType || 'application/octet-stream' },
+    body: blob
+  });
+  if(!resp.ok) throw new Error('Error subiendo foto a Cloudflare (HTTP ' + resp.status + ')');
+  return true;
+}
 let sb = null;
 
 function checkGate(){
@@ -436,8 +453,8 @@ let lotesOT = {}; // { '23449': { archivos:{datos,informe,conclusion,electrico,f
 // Reduce el tamaño de la foto antes de subirla (misma calidad visual, mucho menos peso
 // para transferir por internet — esto es lo que más acelera la subida real).
 function comprimirImagen(file, maxDim, calidad){
-  maxDim = maxDim || 1600;
-  calidad = calidad || 0.82;
+  maxDim = maxDim || 1000;
+  calidad = calidad || 0.65;
   return new Promise((resolve) => {
     if(file.size < 350 * 1024){ resolve({ blob:file, esJpeg:false }); return; } // ya es chica, no vale la pena
     const url = URL.createObjectURL(file);
@@ -597,12 +614,12 @@ function actualizarCabeceraOt(ot){
   }
 }
 
-function toggleOt(ot){
+// Construye el formulario pesado de la OT dentro del DOM si todavía no existe (la primera
+// vez que se abre, o justo antes de importarla si el usuario nunca la abrió). Una vez
+// construido queda marcado con data-built para no rehacerlo de nuevo.
+function construirFormularioSiFalta(ot){
   const body = document.getElementById('ot_body_' + ot);
-  const abierto = body.classList.toggle('open');
-  // Recién al abrir por primera vez se arma el formulario pesado de esta OT, y queda
-  // guardado en el DOM para las próximas veces que se abra (no se reconstruye de nuevo).
-  if(abierto && !body.dataset.built){
+  if(body && !body.dataset.built){
     const lote = lotesOT[ot];
     const d = lote.datos || {};
     body.innerHTML = lote.estado === 'error'
@@ -610,6 +627,11 @@ function toggleOt(ot){
       : renderFormularioOt(ot, d);
     body.dataset.built = '1';
   }
+}
+
+function toggleOt(ot){
+  construirFormularioSiFalta(ot);
+  document.getElementById('ot_body_' + ot).classList.toggle('open');
 }
 
 function renderFormularioOt(ot, d){
@@ -726,8 +748,13 @@ function carpetaIngreso(datos){
 
 async function importarUnaOt(ot){
   const lote = lotesOT[ot];
-  if(lote.enProceso || lote.estado === 'importado') return; // evita duplicar si ya está en curso o ya se importó
+  if(lote.enProceso || lote.estado === 'importado') return 'ya-importada'; // evita duplicar si ya está en curso o ya se importó
   lote.enProceso = true;
+  // Si el usuario nunca abrió/revisó esta OT, el formulario (y su línea de estado) todavía
+  // no existen en la página — hay que construirlo ANTES de buscar la línea de estado, si no
+  // el mensaje de "Verificando..."/"Error..." se intenta escribir en un elemento que no existe
+  // todavía y se pierde en silencio.
+  construirFormularioSiFalta(ot);
   const statusEl = document.getElementById(`status_${ot}`);
   statusEl.className = 'status-line';
   statusEl.textContent = 'Verificando si ya existe...';
@@ -735,18 +762,33 @@ async function importarUnaOt(ot){
     const datos = leerFormularioOt(ot);
     if(!datos.ot){ throw new Error('Falta el número de OT'); }
 
-    // Revisar si esta OT ya fue importada antes (en esta sesión o en una anterior) para no duplicarla
-    const { data: existente, error: errBuscar } = await sb.from('ingresos').select('id').eq('ot', datos.ot).limit(1);
+    // Revisar si esta OT ya fue importada antes (en esta sesión o en una anterior). Si ya existe,
+    // en vez de saltarla siempre, comparamos fechas: si la que estamos importando ahora es más
+    // reciente que la que ya está guardada, se actualiza ese registro con los datos nuevos
+    // (el mismo número de OT puede repetirse entre años en Softland). Si es igual o más antigua,
+    // se omite para no pisar un dato más nuevo con uno viejo.
+    const { data: existente, error: errBuscar } = await sb.from('ingresos').select('id, fecha').eq('ot', datos.ot).limit(1);
     if(errBuscar) throw errBuscar;
+
+    let ingresoId = null;
+    let actualizando = false;
     if(existente && existente.length){
-      lote.estado = 'omitida';
-      renderOtSummary(ot);
-      statusEl.className = 'status-line warn';
-      statusEl.textContent = `Omitida — la OT ${datos.ot} ya existe en la base de datos (no se duplicó).`;
-      return;
+      const registroExistente = existente[0];
+      const fechaNueva = datos.fecha ? new Date(datos.fecha) : null;
+      const fechaExistente = registroExistente.fecha ? new Date(registroExistente.fecha) : null;
+      const esMasReciente = fechaNueva && (!fechaExistente || fechaNueva > fechaExistente);
+      if(!esMasReciente){
+        lote.estado = 'omitida';
+        renderOtSummary(ot);
+        statusEl.className = 'status-line warn';
+        statusEl.textContent = `Omitida — la OT ${datos.ot} ya existe con fecha ${registroExistente.fecha || 'desconocida'} (igual o más reciente que ${datos.fecha || 'sin fecha'}), no se reemplazó.`;
+        return 'omitida';
+      }
+      ingresoId = registroExistente.id;
+      actualizando = true;
     }
 
-    statusEl.textContent = 'Importando...';
+    statusEl.textContent = actualizando ? 'Ya existía con una fecha más antigua — actualizando con esta versión más reciente...' : 'Importando...';
     const payload = {
       ot: datos.ot, cot: datos.cot || null, cliente: datos.cliente, fecha: datos.fecha || null,
       guia: datos.guia, diagnostico: datos.equipoGeneral,
@@ -756,9 +798,19 @@ async function importarUnaOt(ot){
       electrica: datos.aplicaElectrica ? { conexion: datos.conexion || 'ESTRELLA' } : {},
       check_in: [], check_out: []
     };
-    const { data: ing, error: errIng } = await sb.from('ingresos').insert(payload).select().single();
-    if(errIng) throw errIng;
-    const ingresoId = ing.id;
+    if(actualizando){
+      const { error: errUpd } = await sb.from('ingresos').update(payload).eq('id', ingresoId);
+      if(errUpd) throw errUpd;
+      // Se reemplazan los componentes y repuestos de la versión anterior por los de esta versión
+      // más nueva. Las fotos NO se borran — las viejas quedan y se suman las nuevas, cada tanda
+      // bajo su propia carpeta con fecha, así no se pierde nada.
+      await sb.from('componentes').delete().eq('ingreso_id', ingresoId);
+      await sb.from('repuestos').delete().eq('ingreso_id', ingresoId);
+    }else{
+      const { data: ing, error: errIng } = await sb.from('ingresos').insert(payload).select().single();
+      if(errIng) throw errIng;
+      ingresoId = ing.id;
+    }
 
     const compPayload = (nombre, c) => ({
       ingreso_id: ingresoId, nombre, equipo: c.equipo, uso: c.uso, marca: c.marca, modelo: c.modelo, serie: c.serie,
@@ -790,8 +842,7 @@ async function importarUnaOt(ot){
         const ext = esJpeg ? 'jpg' : (file.name.split('.').pop()||'jpg').toLowerCase();
         const nombreArchivo = `${numero}_${sanitizarNombre(etiqueta)}_OT${sanitizarNombre(datos.ot)}.${ext}`;
         const path = `${carpetaIngreso(datos)}/${nombreArchivo}`;
-        const { error: upErr } = await sb.storage.from(CONFIG.STORAGE_BUCKET).upload(path, blob, { upsert:true, contentType: esJpeg ? 'image/jpeg' : (file.type || 'image/jpeg') });
-        if(upErr) throw upErr;
+        await subirFotoAWorker(path, blob, esJpeg ? 'image/jpeg' : (file.type || 'image/jpeg'));
         return { ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero };
       }catch(e){ console.error('foto', file.name, e); return null; }
     }));
@@ -805,13 +856,22 @@ async function importarUnaOt(ot){
     lote.estado = 'importado';
     renderOtSummary(ot);
     document.getElementById(`status_${ot}`).className = 'status-line ok';
-    document.getElementById(`status_${ot}`).textContent = `Importado ✓ (${fotosOk}/${fotos.length} fotos subidas)`;
+    document.getElementById(`status_${ot}`).textContent = actualizando
+      ? `Actualizado ✓ — reemplazó la versión anterior de la OT ${datos.ot} (${fotosOk}/${fotos.length} fotos subidas)`
+      : `Importado ✓ (${fotosOk}/${fotos.length} fotos subidas)`;
+    return 'ok';
   }catch(err){
     console.error(err);
     statusEl.className = 'status-line err';
     statusEl.textContent = 'Error: ' + (err.message || JSON.stringify(err));
+    return 'error';
   }finally{
     lote.enProceso = false;
+    // El error (o el "Importado ✓") queda escrito en este mensaje, pero el panel de la OT
+    // empieza cerrado — si no se abre automáticamente, el mensaje queda invisible y parece
+    // que "no pasó nada" al importar. Lo abrimos siempre al terminar un intento de importación.
+    const body = document.getElementById('ot_body_' + ot);
+    if(body) body.classList.add('open');
   }
 }
 
@@ -835,14 +895,23 @@ async function importarTodo(){
   try{
     const ots = Object.keys(lotesOT).filter(ot => !['error','importado','omitida'].includes(lotesOT[ot].estado));
     let terminadas = 0;
+    const resultados = { ok:0, error:0, omitida:0 };
+    const otsConError = [];
     // Procesamos en tandas de N OT en paralelo, en vez de una por una
     for(let i = 0; i < ots.length; i += CONCURRENCIA){
       const tanda = ots.slice(i, i + CONCURRENCIA);
       btn.textContent = `Importando ${terminadas}/${ots.length}... (${tanda.length} en paralelo)`;
-      await Promise.all(tanda.map(ot => importarUnaOt(ot)));
+      const res = await Promise.all(tanda.map(ot => importarUnaOt(ot)));
+      res.forEach((r, j) => {
+        if(r === 'ok') resultados.ok++;
+        else if(r === 'omitida') resultados.omitida++;
+        else { resultados.error++; otsConError.push(tanda[j]); }
+      });
       terminadas += tanda.length;
     }
-    alert('Proceso terminado. Revisa el resumen de cada OT para confirmar que todas quedaron importadas correctamente.');
+    let mensaje = `Proceso terminado.\n\nImportadas: ${resultados.ok}\nOmitidas (ya existían): ${resultados.omitida}\nCon error: ${resultados.error}`;
+    if(otsConError.length) mensaje += `\n\nOT con error: ${otsConError.join(', ')}\n(el detalle del error está escrito dentro del panel de cada una — ya quedaron abiertas).`;
+    alert(mensaje);
   } finally {
     importacionEnCurso = false;
     btn.disabled = false;

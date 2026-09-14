@@ -118,9 +118,23 @@
     SUPABASE_URL: 'https://ugyccveqizlxretavaiq.supabase.co',
     SUPABASE_KEY: 'sb_publishable_a7Qk4LRW5UGQ6VY3QzRydw_v-MizUFw',
     STORAGE_BUCKET: 'fotos-ot',
-    ADMIN_PASSWORD: 'sehinco2026'
+    ADMIN_PASSWORD: 'sehinco2026',
+    WORKER_URL: 'https://sehinco-fotos.mati4758.workers.dev',
+    UPLOAD_SECRET: 'b17294299c7c42c09b36c270d445be53'
   };
   const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
+
+  // Sube un archivo/blob al Worker de Cloudflare (R2) en vez de a Supabase Storage.
+  async function subirFotoAWorker(path, blob, contentType){
+    const url = CONFIG.WORKER_URL.replace(/\/$/,'') + '/' + path.split('/').map(encodeURIComponent).join('/');
+    const resp = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${CONFIG.UPLOAD_SECRET}`, 'Content-Type': contentType || 'application/octet-stream' },
+      body: blob
+    });
+    if(!resp.ok) throw new Error('Error subiendo foto a Cloudflare (HTTP ' + resp.status + ')');
+    return true;
+  }
 
   function checkGate(){
     const val = document.getElementById('gatePass').value;
@@ -277,8 +291,7 @@
         const ext = (a.file.name.split('.').pop() || 'jpg').toLowerCase();
         const nombreArchivo = `${orden}_${sanitizarNombre(etiqueta)}_OT${sanitizarNombre(ingresoActual.ot)}.${ext}`;
         const path = `${carpetaIngreso()}/${nombreArchivo}`;
-        const { error: upErr } = await sb.storage.from(CONFIG.STORAGE_BUCKET).upload(path, a.file, { upsert: true });
-        if(upErr) throw upErr;
+        await subirFotoAWorker(path, a.file, a.file.type || 'image/jpeg');
         const { error: insErr } = await sb.from('fotos').insert({ ingreso_id: ingresoActual.id, storage_path: path, etiqueta, orden });
         if(insErr) throw insErr;
         ok++;
