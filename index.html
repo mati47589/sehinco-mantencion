@@ -363,11 +363,59 @@
   const CONFIG = {
     SUPABASE_URL: 'https://ugyccveqizlxretavaiq.supabase.co',
     SUPABASE_KEY: 'sb_publishable_a7Qk4LRW5UGQ6VY3QzRydw_v-MizUFw', // clave pública, segura para el navegador
-    STORAGE_BUCKET: 'fotos-ot',
+    STORAGE_BUCKET: 'fotos-ot',      // ya no se usa para fotos (ver WORKER_URL), se deja por si vuelve a hacer falta
+    WORKER_URL: 'https://sehinco-fotos.mati4758.workers.dev',
+    UPLOAD_SECRET: 'b17294299c7c42c09b36c270d445be53',
     ADMIN_PASSWORD: 'sehinco2026',   // contraseña para eliminar registros — cámbiala aquí
     MAX_FOTO_MB: 15                  // tamaño máximo permitido por foto
   };
   const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
+
+  // Fotos: ahora se guardan en Cloudflare R2 a través de este Worker, en vez de Supabase Storage
+  // (Supabase Storage se quedaba sin espacio del plan gratis). `storage_path` sigue siendo la
+  // misma ruta relativa de siempre; solo cambia dónde vive el archivo.
+  function workerUrl(path){
+    return CONFIG.WORKER_URL.replace(/\/$/,'') + '/' + path.split('/').map(encodeURIComponent).join('/');
+  }
+  async function subirFotoAWorker(path, blob, contentType){
+    const resp = await fetch(workerUrl(path), {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${CONFIG.UPLOAD_SECRET}`, 'Content-Type': contentType || 'application/octet-stream' },
+      body: blob
+    });
+    if(!resp.ok) throw new Error('Error subiendo foto a Cloudflare (HTTP ' + resp.status + ')');
+  }
+  async function eliminarFotoWorker(path){
+    try{
+      await fetch(workerUrl(path), { method: 'DELETE', headers: { 'Authorization': `Bearer ${CONFIG.UPLOAD_SECRET}` } });
+    }catch(e){ console.error('eliminarFotoWorker', path, e); }
+  }
+  // Reduce el tamaño de la foto antes de subirla (mismo criterio que las herramientas admin).
+  function comprimirImagen(file, maxDim, calidad){
+    maxDim = maxDim || 1000;
+    calidad = calidad || 0.65;
+    return new Promise((resolve) => {
+      if(file.size < 350 * 1024){ resolve({ blob:file, esJpeg:false }); return; } // ya es chica, no vale la pena
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if(width > maxDim || height > maxDim){
+          if(width > height){ height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          resolve(blob ? { blob, esJpeg:true } : { blob:file, esJpeg:false });
+        }, 'image/jpeg', calidad);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve({ blob:file, esJpeg:false }); };
+      img.src = url;
+    });
+  }
 </script>
 
 <!-- ============================================================ ICONOS (uso interno via innerHTML) ============================================================ -->
@@ -1197,7 +1245,7 @@ async function deleteRecord(id){
   try{
     const { data: fotos } = await sb.from('fotos').select('storage_path').eq('ingreso_id', id);
     if(fotos && fotos.length){
-      await sb.storage.from(CONFIG.STORAGE_BUCKET).remove(fotos.map(f=>f.storage_path));
+      await Promise.all(fotos.map(f => eliminarFotoWorker(f.storage_path)));
     }
     await sb.from('ingresos').delete().eq('id', id); // componentes/repuestos/fotos caen en cascada
     showToast('Registro eliminado');
@@ -1345,7 +1393,7 @@ async function printRecord(id){
   if(rec.aplicaElectrica) html += pageElectrica(rec);
   const fotos = (rec.fotos || []).sort((a,b) => (a.orden||0)-(b.orden||0));
   const fotosHtml = fotos.length ? fotos.map(f => {
-    const url = sb.storage.from(CONFIG.STORAGE_BUCKET).getPublicUrl(f.storage_path).data.publicUrl;
+    const url = workerUrl(f.storage_path);
     return `<div class="doc-photo"><img src="${url}" style="max-width:100%;max-height:300px;border:1px solid #999;"><br>${f.etiqueta||''}</div>`;
   }).join('') : `<p style="font-size:11.5px;color:#555;">Sin fotos cargadas para esta OT.</p>`;
   html += `<div class="doc-page" style="page-break-after:auto;">
@@ -1419,7 +1467,7 @@ function renderFotosList(fotos){
     const found = currentFotos.find(f => f.orden === idx + 1) || currentFotos.find(f => f.etiqueta === slot.label);
     const inner = found
       ? (() => {
-          const url = sb.storage.from(CONFIG.STORAGE_BUCKET).getPublicUrl(found.storage_path).data.publicUrl;
+          const url = workerUrl(found.storage_path);
           return `<div class="thumb-wrap"><img src="${url}"></div><span class="badge-ok">${icon('check-circle')}</span><button class="remove-x" onclick="event.stopPropagation(); eliminarFotoSlot('${found.id}','${found.storage_path}')">${icon('close')}</button>`;
         })()
       : `<div class="thumb-wrap"><span class="placeholder-icon">${icon('camera')}</span></div>`;
@@ -1434,7 +1482,7 @@ function renderFotosList(fotos){
   extraEl.innerHTML = extras.length === 0
     ? '<div class="empty-hint">Sin fotos adicionales.</div>'
     : extras.map(f => {
-        const url = sb.storage.from(CONFIG.STORAGE_BUCKET).getPublicUrl(f.storage_path).data.publicUrl;
+        const url = workerUrl(f.storage_path);
         return `<div class="extra-fotos-row">
           <img src="${url}">
           <span>${f.etiqueta || 'Sin etiqueta'}</span>
@@ -1504,8 +1552,8 @@ async function subirFotoASlot(file, etiqueta, orden){
     const nombreArchivo = `${numero}_${sanitizarNombre(etiqueta)}_OT${sanitizarNombre(ot)}.${ext}`;
     const carpeta = carpetaIngreso(ingresoId);
     const path = `${carpeta}/${nombreArchivo}`;
-    const { error: upErr } = await sb.storage.from(CONFIG.STORAGE_BUCKET).upload(path, file, { upsert: true });
-    if(upErr) throw upErr;
+    const { blob, esJpeg } = await comprimirImagen(file);
+    await subirFotoAWorker(path, blob, esJpeg ? 'image/jpeg' : (file.type || 'image/jpeg'));
     const { error: insErr } = await sb.from('fotos').insert({ ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero });
     if(insErr) throw insErr;
     showToast('Foto subida ✓');
@@ -1574,7 +1622,7 @@ async function subirFotoExtraArchivo(file, etiqueta){
 
 async function eliminarFotoSilencioso(fotoId, path){
   try{
-    await sb.storage.from(CONFIG.STORAGE_BUCKET).remove([path]);
+    await eliminarFotoWorker(path);
     await sb.from('fotos').delete().eq('id', fotoId);
   }catch(e){ console.error(e); }
 }
