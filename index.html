@@ -352,7 +352,6 @@
   .doc-section-title{ font-weight:700; font-size:12px; text-align:center; background:#f2f2f2; border:1px solid #000; padding:4px; margin-bottom:0; }
   .doc-photo{ text-align:center; margin:10px 0; font-size:11px; }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 <script>
@@ -361,15 +360,36 @@
      Edita solo estos valores para reconfigurar la app.
      ============================================================ */
   const CONFIG = {
-    SUPABASE_URL: 'https://ugyccveqizlxretavaiq.supabase.co',
-    SUPABASE_KEY: 'sb_publishable_a7Qk4LRW5UGQ6VY3QzRydw_v-MizUFw', // clave pública, segura para el navegador
-    STORAGE_BUCKET: 'fotos-ot',      // ya no se usa para fotos (ver WORKER_URL), se deja por si vuelve a hacer falta
     WORKER_URL: 'https://sehinco-fotos.mati4758.workers.dev',
     UPLOAD_SECRET: 'b17294299c7c42c09b36c270d445be53',
     ADMIN_PASSWORD: 'sehinco2026',   // contraseña para eliminar registros — cámbiala aquí
     MAX_FOTO_MB: 15                  // tamaño máximo permitido por foto
   };
-  const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
+
+  // Cliente de la API de datos (D1, vía el mismo Worker que ya sirve las fotos).
+  // Devuelve siempre {data, error} — misma forma que usaba supabase-js — para no
+  // tener que tocar la lógica de las funciones que la consumen.
+  const API_BASE = CONFIG.WORKER_URL.replace(/\/$/,'') + '/api';
+  async function api(path, opts){
+    opts = opts || {};
+    const headers = {};
+    if(opts.body !== undefined) headers['Content-Type'] = 'application/json';
+    if(opts.auth) headers['Authorization'] = 'Bearer ' + CONFIG.UPLOAD_SECRET;
+    try{
+      const resp = await fetch(API_BASE + path, {
+        method: opts.method || 'GET',
+        headers,
+        body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined
+      });
+      let out;
+      try{ out = await resp.json(); }
+      catch(e){ out = { data:null, error:{ message: 'Respuesta inválida del servidor (' + resp.status + ')' } }; }
+      if(!resp.ok && !out.error) out.error = { message: 'HTTP ' + resp.status };
+      return out;
+    }catch(e){
+      return { data:null, error:{ message: e.message || 'Error de red' } };
+    }
+  }
 
   // Fotos: ahora se guardan en Cloudflare R2 a través de este Worker, en vez de Supabase Storage
   // (Supabase Storage se quedaba sin espacio del plan gratis). `storage_path` sigue siendo la
@@ -417,6 +437,9 @@
     });
   }
 </script>
+
+<!-- Ya no se usa supabase-js — los datos (ingresos/componentes/repuestos/fotos) viven en D1,
+     servidos por el mismo Worker de las fotos, a través del helper api() de más arriba. -->
 
 <!-- ============================================================ ICONOS (uso interno via innerHTML) ============================================================ -->
 <template id="icons">
@@ -704,7 +727,7 @@ const spy = new IntersectionObserver((entries) => {
 jumpSections.forEach(s => spy.observe(s));
 
 /* ============================================================
-   MODELO DE DATOS (idéntico al esquema ya creado en Supabase)
+   MODELO DE DATOS (idéntico al esquema ya creado en D1)
    ============================================================ */
 const COMPONENT_FIELDS_TEMPLATE = () => ({
   nombre: '', equipo:'', uso:'', codigoEquipo:'', marca:'', modelo:'', serie:'',
@@ -933,7 +956,7 @@ REQUIRED_FIELDS.forEach(f => {
   document.getElementById(f.id).addEventListener('input', () => document.getElementById(f.id).classList.remove('input-error'));
 });
 
-/* ---------- Guardar registro (Supabase) ---------- */
+/* ---------- Guardar registro (API D1) ---------- */
 function collectRecord(existingId){
   return {
     id: existingId || ('rec_' + Date.now()),
@@ -995,9 +1018,9 @@ async function saveRecord(){
   };
   try{
     if(rec.ot){
-      let dupQuery = sb.from('ingresos').select('id').eq('ot', rec.ot);
-      if(window.editingId) dupQuery = dupQuery.neq('id', window.editingId);
-      const { data: dup } = await dupQuery.limit(1);
+      let dupPath = '/ingresos?ot=' + encodeURIComponent(rec.ot);
+      if(window.editingId) dupPath += '&exclude_id=' + encodeURIComponent(window.editingId);
+      const { data: dup } = await api(dupPath);
       if(dup && dup.length){
         if(!confirm(`Ya existe otro registro con la OT ${rec.ot}. ¿Guardar de todas formas?`)){
           btn.disabled = false; label.textContent = textoOriginal;
@@ -1007,17 +1030,17 @@ async function saveRecord(){
     }
     let ingresoId = window.editingId;
     if(ingresoId){
-      const { error } = await sb.from('ingresos').update(payload).eq('id', ingresoId);
+      const { error } = await api('/ingresos/' + ingresoId, { method:'PUT', body: payload, auth:true });
       if(error) throw error;
-      await sb.from('componentes').delete().eq('ingreso_id', ingresoId);
-      await sb.from('repuestos').delete().eq('ingreso_id', ingresoId);
+      await api('/componentes?ingreso_id=' + ingresoId, { method:'DELETE', auth:true });
+      await api('/repuestos?ingreso_id=' + ingresoId, { method:'DELETE', auth:true });
     }else{
-      const { data, error } = await sb.from('ingresos').insert(payload).select().single();
+      const { data, error } = await api('/ingresos', { method:'POST', body: payload, auth:true });
       if(error) throw error;
       ingresoId = data.id;
     }
     for(const c of rec.componentes){
-      const { error } = await sb.from('componentes').insert({
+      const { error } = await api('/componentes', { method:'POST', auth:true, body: {
         ingreso_id: ingresoId, nombre: c.nombre, equipo: c.equipo, uso: c.uso, codigo_equipo: c.codigoEquipo,
         marca: c.marca, modelo: c.modelo, serie: c.serie, potencia: c.potencia, corriente: c.corriente,
         voltaje: c.voltaje, frecuencia: c.frecuencia, rpm: c.rpm, acoplamiento: c.acoplamiento,
@@ -1027,11 +1050,11 @@ async function saveRecord(){
         lubricante: c.lubricante, cant_lubricante: c.cantLubricante, motor_quemado: c.motorQuemado,
         ventilador_danado: c.ventiladorDañado, encamizado: c.encamizado, encamizado_valor: c.encamizadoValor,
         observacion: c.observacion
-      });
+      }});
       if(error) throw error;
     }
     for(const r of rec.repuestos){
-      const { error } = await sb.from('repuestos').insert({ ingreso_id: ingresoId, componente: r.componente, descripcion: r.descripcion, cantidad: r.cantidad });
+      const { error } = await api('/repuestos', { method:'POST', auth:true, body: { ingreso_id: ingresoId, componente: r.componente, descripcion: r.descripcion, cantidad: r.cantidad } });
       if(error) throw error;
     }
     window.editingId = ingresoId;
@@ -1098,7 +1121,7 @@ function resetForm(){
 
 async function listAllRecords(){
   try{
-    const { data, error } = await sb.from('ingresos').select('*, componentes(*), repuestos(*), fotos(*)').order('created_at', { ascending: false });
+    const { data, error } = await api('/ingresos?join=full');
     if(error) throw error;
     return data.map(mapFromSupabase);
   }catch(e){ console.error(e); return []; }
@@ -1179,7 +1202,7 @@ async function renderList(){
 document.getElementById('searchBox').addEventListener('input', renderList);
 
 async function editRecord(id){
-  const { data, error } = await sb.from('ingresos').select('*, componentes(*), repuestos(*), fotos(*)').eq('id', id).single();
+  const { data, error } = await api('/ingresos/' + id + '?join=full');
   if(error){ console.error(error); showToast('No se pudo cargar el registro', 'error'); return; }
   const rec = mapFromSupabase(data);
   window.editingId = rec.id;
@@ -1243,11 +1266,11 @@ async function deleteRecord(id){
   if(!isAdmin){ showToast('Solo un administrador puede eliminar registros', 'error'); return; }
   if(!confirm('¿Eliminar este registro? Esta acción no se puede deshacer.')) return;
   try{
-    const { data: fotos } = await sb.from('fotos').select('storage_path').eq('ingreso_id', id);
+    const { data: fotos } = await api('/fotos?ingreso_id=' + id);
     if(fotos && fotos.length){
       await Promise.all(fotos.map(f => eliminarFotoWorker(f.storage_path)));
     }
-    await sb.from('ingresos').delete().eq('id', id); // componentes/repuestos/fotos caen en cascada
+    await api('/ingresos/' + id, { method:'DELETE', auth:true }); // componentes/repuestos/fotos caen en cascada (las borra el Worker)
     showToast('Registro eliminado');
     renderList();
   }catch(e){ console.error(e); showToast('Error al eliminar: ' + (e.message||''), 'error'); }
@@ -1386,7 +1409,7 @@ function pageElectrica(rec){
 }
 
 async function printRecord(id){
-  const { data, error } = await sb.from('ingresos').select('*, componentes(*), repuestos(*), fotos(*)').eq('id', id).single();
+  const { data, error } = await api('/ingresos/' + id + '?join=full');
   if(error){ console.error(error); showToast('Error al cargar el registro', 'error'); return; }
   const rec = mapFromSupabase(data);
   let html = pageDatosIngreso(rec) + pageInforme(rec);
@@ -1492,7 +1515,7 @@ function renderFotosList(fotos){
 }
 
 async function refreshFotos(ingresoId){
-  const { data, error } = await sb.from('fotos').select('*').eq('ingreso_id', ingresoId).order('orden');
+  const { data, error } = await api('/fotos?ingreso_id=' + ingresoId);
   if(error){ console.error(error); return; }
   renderFotosList(data);
 }
@@ -1505,7 +1528,7 @@ async function ensureIngresoId(){
     // intentar crear uno nuevo (esto evita el bloqueo de "OT duplicada" al
     // subir/reemplazar una foto de un registro que ya se había guardado antes).
     try{
-      const { data: existente } = await sb.from('ingresos').select('id').eq('ot', ot).limit(1);
+      const { data: existente } = await api('/ingresos?ot=' + encodeURIComponent(ot));
       if(existente && existente.length){
         window.editingId = existente[0].id;
         return window.editingId;
@@ -1554,7 +1577,7 @@ async function subirFotoASlot(file, etiqueta, orden){
     const path = `${carpeta}/${nombreArchivo}`;
     const { blob, esJpeg } = await comprimirImagen(file);
     await subirFotoAWorker(path, blob, esJpeg ? 'image/jpeg' : (file.type || 'image/jpeg'));
-    const { error: insErr } = await sb.from('fotos').insert({ ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero });
+    const { error: insErr } = await api('/fotos', { method:'POST', auth:true, body: { ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero } });
     if(insErr) throw insErr;
     showToast('Foto subida ✓');
     await refreshFotos(ingresoId);
@@ -1623,7 +1646,7 @@ async function subirFotoExtraArchivo(file, etiqueta){
 async function eliminarFotoSilencioso(fotoId, path){
   try{
     await eliminarFotoWorker(path);
-    await sb.from('fotos').delete().eq('id', fotoId);
+    await api('/fotos/' + fotoId, { method:'DELETE', auth:true });
   }catch(e){ console.error(e); }
 }
 
