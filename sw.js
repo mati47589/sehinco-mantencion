@@ -2,10 +2,11 @@
 // Solo usa la copia guardada localmente si no hay conexión — así, cada vez
 // que se sube una actualización a GitHub, la app la toma de inmediato en
 // vez de mostrar una versión vieja guardada en el celular/tablet.
-// Los datos (Supabase) siempre se piden en vivo, nunca se cachean.
+// Los datos (API del Worker) NUNCA se guardan en caché: son privados y
+// siempre se piden en vivo con el PIN del usuario.
 
-const CACHE_NAME = 'sehinco-ingreso-v2';
-const SHELL_FILES = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE_NAME = 'sehinco-ingreso-v3';
+const SHELL_FILES = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './logo-sehinco.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -24,19 +25,22 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Nunca interceptar llamadas a Supabase: esos datos siempre deben pedirse en vivo.
-  if (event.request.url.includes('supabase.co')) return;
+  const req = event.request;
+  // Solo se cachean lecturas (GET). Subidas, guardados y borrados pasan directo.
+  if (req.method !== 'GET') return;
+  // Nunca interceptar la API de datos: siempre en vivo y nunca guardada en el tablet.
+  if (req.url.includes('/api/')) return;
 
   // Network-first: intenta traer la versión más nueva de internet siempre que se pueda.
   event.respondWith(
-    fetch(event.request)
+    fetch(req)
       .then((response) => {
         if (response && response.status === 200) {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
         }
         return response;
       })
-      .catch(() => caches.match(event.request)) // sin internet: usa la última copia guardada
+      .catch(() => caches.match(req)) // sin internet: usa la última copia guardada
   );
 });

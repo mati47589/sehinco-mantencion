@@ -361,22 +361,100 @@
      ============================================================ */
   const CONFIG = {
     WORKER_URL: 'https://sehinco-fotos.mati4758.workers.dev',
-    UPLOAD_SECRET: 'b17294299c7c42c09b36c270d445be53',
-    ADMIN_PASSWORD: 'sehinco2026',   // contraseña para eliminar registros — cámbiala aquí
     MAX_FOTO_MB: 15                  // tamaño máximo permitido por foto
   };
+  // Los PIN (técnico y administrador) ya NO están en el código: se validan en el Worker.
+
+  const API_BASE = CONFIG.WORKER_URL.replace(/\/$/,'') + '/api';
+
+  /* ============================================================
+     SESIÓN POR PIN
+     El tablet guarda un "token" (no el PIN). Token de técnico dura 90 días,
+     el de administrador 12 horas. Si vence o es rechazado, se pide el PIN.
+     ============================================================ */
+  const TK_TEC = 'sehinco_tk', TK_ADM = 'sehinco_tk_admin';
+  function leerTk(k){
+    try{ const o = JSON.parse(localStorage.getItem(k) || 'null'); if(o && o.token && o.exp > Date.now()/1000 + 30) return o; }catch(e){}
+    return null;
+  }
+  function guardarTk(k, o){ try{ localStorage.setItem(k, JSON.stringify(o)); }catch(e){} }
+  function borrarTk(k){ try{ localStorage.removeItem(k); }catch(e){} }
+  function esAdminSesion(){ return !!leerTk(TK_ADM); }
+  function tokenActual(){ const a = leerTk(TK_ADM) || leerTk(TK_TEC); return a ? a.token : null; }
+
+  async function loginConPin(pin){
+    try{
+      const resp = await fetch(API_BASE + '/login', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ pin }) });
+      let out; try{ out = await resp.json(); }catch(e){ out = null; }
+      if(!resp.ok || !out || out.error || !out.data) return { ok:false, message: (out && out.error && out.error.message) || ('Error del servidor (' + resp.status + ')') };
+      guardarTk(out.data.rol === 'admin' ? TK_ADM : TK_TEC, out.data);
+      return { ok:true, rol: out.data.rol };
+    }catch(e){ return { ok:false, message:'Sin conexión con el servidor. Revisa internet.' }; }
+  }
+
+  // Pantalla de PIN. Si varias llamadas la piden a la vez, comparten la misma pantalla.
+  let pinPromesa = null;
+  function pedirPin(){
+    if(pinPromesa) return pinPromesa;
+    pinPromesa = new Promise(resolve => {
+      const st = document.createElement('style');
+      st.textContent = '#pinOverlay{position:fixed;inset:0;z-index:99999;background:#F2F3F5;display:flex;align-items:center;justify-content:center;padding:20px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}'
+        + '#pinOverlay .box{background:#fff;border:1px solid #DDE1E6;border-radius:16px;padding:28px 24px;max-width:340px;width:100%;text-align:center;box-shadow:0 2px 14px rgba(20,24,28,.10)}'
+        + '#pinOverlay img{width:64px;height:64px;object-fit:contain}'
+        + '#pinOverlay h1{font-size:18px;margin:10px 0 4px;color:#181B1F}#pinOverlay p{font-size:13px;color:#4B5158;margin:0 0 16px}'
+        + '#pinOverlay input{width:100%;box-sizing:border-box;font-size:22px;text-align:center;letter-spacing:.15em;padding:12px;border:1px solid #C6CBD2;border-radius:10px;background:#EEF0F3;color:#181B1F}'
+        + '#pinOverlay button{margin-top:14px;width:100%;padding:13px;font-size:16px;font-weight:700;border:none;border-radius:10px;background:#FF7A33;color:#231400;cursor:pointer}'
+        + '#pinOverlay button:disabled{opacity:.6}#pinOverlay .err{color:#D32F2F;font-size:13px;min-height:18px;margin-top:10px}';
+      const ov = document.createElement('div');
+      ov.id = 'pinOverlay';
+      ov.innerHTML = '<div class="box"><img src="logo-sehinco.png" alt=""><h1>SEHINCO</h1><p>Ingresa tu PIN para continuar</p>'
+        + '<input id="pinInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="PIN">'
+        + '<button id="pinBtn">Entrar</button><div class="err" id="pinErr"></div></div>';
+      document.head.appendChild(st);
+      document.body.appendChild(ov);
+      const input = ov.querySelector('#pinInput'), btn = ov.querySelector('#pinBtn'), err = ov.querySelector('#pinErr');
+      async function enviar(){
+        const pin = input.value.trim();
+        if(!pin) return;
+        btn.disabled = true; err.textContent = '';
+        const r = await loginConPin(pin);
+        btn.disabled = false;
+        if(r.ok){
+          ov.remove(); st.remove(); pinPromesa = null;
+          try{ isAdmin = esAdminSesion(); updateAdminButton(); }catch(e){}
+          resolve(true);
+        }else{
+          err.textContent = r.message; input.value = ''; input.focus();
+        }
+      }
+      btn.addEventListener('click', enviar);
+      input.addEventListener('keydown', e => { if(e.key === 'Enter') enviar(); });
+      setTimeout(() => input.focus(), 50);
+    });
+    return pinPromesa;
+  }
+
+  // fetch con la sesión puesta. Si el servidor rechaza la sesión (401), pide el PIN y reintenta una vez.
+  async function fetchAuth(url, init){
+    init = init || {};
+    for(let intento = 0; intento < 2; intento++){
+      if(!tokenActual()) await pedirPin();
+      const resp = await fetch(url, { ...init, headers: { ...(init.headers || {}), 'Authorization': 'Bearer ' + tokenActual() } });
+      if(resp.status !== 401 || intento === 1) return resp;
+      borrarTk(TK_TEC); borrarTk(TK_ADM);
+      try{ isAdmin = false; updateAdminButton(); }catch(e){}
+      await pedirPin();
+    }
+  }
 
   // Cliente de la API de datos (D1, vía el mismo Worker que ya sirve las fotos).
-  // Devuelve siempre {data, error} — misma forma que usaba supabase-js — para no
-  // tener que tocar la lógica de las funciones que la consumen.
-  const API_BASE = CONFIG.WORKER_URL.replace(/\/$/,'') + '/api';
+  // Devuelve siempre {data, error}.
   async function api(path, opts){
     opts = opts || {};
     const headers = {};
     if(opts.body !== undefined) headers['Content-Type'] = 'application/json';
-    if(opts.auth) headers['Authorization'] = 'Bearer ' + CONFIG.UPLOAD_SECRET;
     try{
-      const resp = await fetch(API_BASE + path, {
+      const resp = await fetchAuth(API_BASE + path, {
         method: opts.method || 'GET',
         headers,
         body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined
@@ -398,16 +476,16 @@
     return CONFIG.WORKER_URL.replace(/\/$/,'') + '/' + path.split('/').map(encodeURIComponent).join('/');
   }
   async function subirFotoAWorker(path, blob, contentType){
-    const resp = await fetch(workerUrl(path), {
+    const resp = await fetchAuth(workerUrl(path), {
       method: 'PUT',
-      headers: { 'Authorization': `Bearer ${CONFIG.UPLOAD_SECRET}`, 'Content-Type': contentType || 'application/octet-stream' },
+      headers: { 'Content-Type': contentType || 'image/jpeg' },
       body: blob
     });
     if(!resp.ok) throw new Error('Error subiendo foto a Cloudflare (HTTP ' + resp.status + ')');
   }
   async function eliminarFotoWorker(path){
     try{
-      await fetch(workerUrl(path), { method: 'DELETE', headers: { 'Authorization': `Bearer ${CONFIG.UPLOAD_SECRET}` } });
+      await fetchAuth(workerUrl(path), { method: 'DELETE' });
     }catch(e){ console.error('eliminarFotoWorker', path, e); }
   }
   // Reduce el tamaño de la foto antes de subirla (mismo criterio que las herramientas admin).
@@ -1028,20 +1106,10 @@ async function saveRecord(){
         }
       }
     }
-    let ingresoId = window.editingId;
-    if(ingresoId){
-      const { error } = await api('/ingresos/' + ingresoId, { method:'PUT', body: payload, auth:true });
-      if(error) throw error;
-      await api('/componentes?ingreso_id=' + ingresoId, { method:'DELETE', auth:true });
-      await api('/repuestos?ingreso_id=' + ingresoId, { method:'DELETE', auth:true });
-    }else{
-      const { data, error } = await api('/ingresos', { method:'POST', body: payload, auth:true });
-      if(error) throw error;
-      ingresoId = data.id;
-    }
-    for(const c of rec.componentes){
-      const { error } = await api('/componentes', { method:'POST', auth:true, body: {
-        ingreso_id: ingresoId, nombre: c.nombre, equipo: c.equipo, uso: c.uso, codigo_equipo: c.codigoEquipo,
+    // Todo se guarda en UNA sola llamada (todo o nada): si se corta internet a la mitad,
+    // no queda una OT a medias sin componentes.
+    const componentesPayload = rec.componentes.map(c => ({
+        nombre: c.nombre, equipo: c.equipo, uso: c.uso, codigo_equipo: c.codigoEquipo,
         marca: c.marca, modelo: c.modelo, serie: c.serie, potencia: c.potencia, corriente: c.corriente,
         voltaje: c.voltaje, frecuencia: c.frecuencia, rpm: c.rpm, acoplamiento: c.acoplamiento,
         rodamiento: c.rodamiento, rod_reductor: c.rodamientoReductor, retenes: c.retenes, retenes_reductor: c.retenesReductor, sello_mecanico: c.selloMecanico, impulsor: c.impulsor,
@@ -1050,13 +1118,13 @@ async function saveRecord(){
         lubricante: c.lubricante, cant_lubricante: c.cantLubricante, motor_quemado: c.motorQuemado,
         ventilador_danado: c.ventiladorDañado, encamizado: c.encamizado, encamizado_valor: c.encamizadoValor,
         observacion: c.observacion
-      }});
-      if(error) throw error;
-    }
-    for(const r of rec.repuestos){
-      const { error } = await api('/repuestos', { method:'POST', auth:true, body: { ingreso_id: ingresoId, componente: r.componente, descripcion: r.descripcion, cantidad: r.cantidad } });
-      if(error) throw error;
-    }
+    }));
+    const repuestosPayload = rec.repuestos.map(r => ({ componente: r.componente, descripcion: r.descripcion, cantidad: r.cantidad }));
+    const { data: guardado, error } = await api('/guardar', { method:'POST', body: {
+      id: window.editingId || undefined, ingreso: payload, componentes: componentesPayload, repuestos: repuestosPayload
+    }});
+    if(error) throw error;
+    const ingresoId = guardado.id;
     window.editingId = ingresoId;
     await refreshFotos(ingresoId);
     showToast('Registro guardado ✓');
@@ -1263,14 +1331,12 @@ async function editRecord(id){
 }
 
 async function deleteRecord(id){
-  if(!isAdmin){ showToast('Solo un administrador puede eliminar registros', 'error'); return; }
+  if(!isAdmin || !esAdminSesion()){ isAdmin = false; updateAdminButton(); showToast('Solo un administrador puede eliminar registros. Vuelve a entrar como administrador.', 'error'); renderList(); return; }
   if(!confirm('¿Eliminar este registro? Esta acción no se puede deshacer.')) return;
   try{
-    const { data: fotos } = await api('/fotos?ingreso_id=' + id);
-    if(fotos && fotos.length){
-      await Promise.all(fotos.map(f => eliminarFotoWorker(f.storage_path)));
-    }
-    await api('/ingresos/' + id, { method:'DELETE', auth:true }); // componentes/repuestos/fotos caen en cascada (las borra el Worker)
+    // El Worker borra el informe, sus componentes, repuestos y también las fotos guardadas en R2.
+    const { error } = await api('/ingresos/' + id, { method:'DELETE' });
+    if(error) throw error;
     showToast('Registro eliminado');
     renderList();
   }catch(e){ console.error(e); showToast('Error al eliminar: ' + (e.message||''), 'error'); }
@@ -1577,7 +1643,7 @@ async function subirFotoASlot(file, etiqueta, orden){
     const path = `${carpeta}/${nombreArchivo}`;
     const { blob, esJpeg } = await comprimirImagen(file);
     await subirFotoAWorker(path, blob, esJpeg ? 'image/jpeg' : (file.type || 'image/jpeg'));
-    const { error: insErr } = await api('/fotos', { method:'POST', auth:true, body: { ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero } });
+    const { error: insErr } = await api('/fotos', { method:'POST', body: { ingreso_id: ingresoId, storage_path: path, etiqueta, orden: numero } });
     if(insErr) throw insErr;
     showToast('Foto subida ✓');
     await refreshFotos(ingresoId);
@@ -1646,7 +1712,7 @@ async function subirFotoExtraArchivo(file, etiqueta){
 async function eliminarFotoSilencioso(fotoId, path){
   try{
     await eliminarFotoWorker(path);
-    await api('/fotos/' + fotoId, { method:'DELETE', auth:true });
+    await api('/fotos/' + fotoId, { method:'DELETE' });
   }catch(e){ console.error(e); }
 }
 
@@ -1675,7 +1741,7 @@ document.getElementById('navList').addEventListener('click', () => switchView('l
 /* ============================================================
    MODO ADMINISTRADOR
    ============================================================ */
-let isAdmin = localStorage.getItem('sehinco_admin') === 'true';
+let isAdmin = esAdminSesion();   // el modo admin existe solo mientras el token de administrador siga vigente (12 h)
 
 function updateAdminButton(){
   const btn = document.getElementById('btnAdmin');
@@ -1684,25 +1750,27 @@ function updateAdminButton(){
   btn.classList.toggle('admin-active', isAdmin);
   btn.title = isAdmin ? 'Click para salir del modo administrador' : 'Click para entrar como administrador';
 }
-function toggleAdmin(){
-  if(isAdmin){
+async function toggleAdmin(){
+  if(isAdmin && esAdminSesion()){
     if(confirm('¿Salir del modo administrador?')){
       isAdmin = false;
-      localStorage.removeItem('sehinco_admin');
+      borrarTk(TK_ADM);
       updateAdminButton();
       renderList();
     }
     return;
   }
-  const pass = prompt('Contraseña de administrador:');
-  if(pass === null) return;
-  if(pass === CONFIG.ADMIN_PASSWORD){
-    isAdmin = true;
-    localStorage.setItem('sehinco_admin', 'true');
-    showToast('Modo administrador activado');
+  const pin = prompt('PIN de administrador:');
+  if(pin === null || !pin.trim()) return;
+  const r = await loginConPin(pin.trim());
+  if(!r.ok){
+    showToast(r.message || 'PIN incorrecto', 'error');
+  }else if(r.rol !== 'admin'){
+    showToast('Ese PIN no es de administrador', 'error');
   }else{
-    showToast('Contraseña incorrecta', 'error');
+    showToast('Modo administrador activado (dura 12 horas)');
   }
+  isAdmin = esAdminSesion();
   updateAdminButton();
   renderList();
 }
