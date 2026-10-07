@@ -85,8 +85,15 @@
   input[type=text]::placeholder, textarea::placeholder{ text-transform:none; }
   textarea{ font-family:var(--sans); min-height:64px; resize:vertical; }
   input:focus, select:focus, textarea:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
-  /* Ejemplos (placeholder): claros y en cursiva para no confundirlos con texto ya escrito */
-  input::placeholder, textarea::placeholder{ color:#A9B0BA; font-style:italic; font-weight:400; opacity:1; }
+  /* Ejemplos (placeholder): muy claros y en cursiva para no confundirlos con texto ya escrito */
+  input::placeholder, textarea::placeholder{ color:#B4BBC5; font-style:italic; font-weight:400; opacity:1; }
+  /* Campo con contenido real: fondo blanco, borde marcado y letra oscura más gruesa (distinto del campo vacío con ejemplo) */
+  input[placeholder]:not([placeholder=""]):not(:placeholder-shown),
+  textarea[placeholder]:not([placeholder=""]):not(:placeholder-shown){
+    background:#FFFFFF; border-color:#7C8695; color:#0B0D10; font-weight:700;
+  }
+  input[placeholder]:not([placeholder=""]):not(:placeholder-shown):focus,
+  textarea[placeholder]:not([placeholder=""]):not(:placeholder-shown):focus{ border-color:var(--accent); }
   .input-error{ border-color:var(--danger) !important; box-shadow:0 0 0 3px var(--danger-dim) !important; }
   .hint{ font-size:13px; color:var(--text-dim); line-height:1.55; }
 
