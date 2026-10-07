@@ -85,7 +85,8 @@
   input[type=text]::placeholder, textarea::placeholder{ text-transform:none; }
   textarea{ font-family:var(--sans); min-height:64px; resize:vertical; }
   input:focus, select:focus, textarea:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
-  input::placeholder, textarea::placeholder{ color:var(--text-faint); }
+  /* Ejemplos (placeholder): claros y en cursiva para no confundirlos con texto ya escrito */
+  input::placeholder, textarea::placeholder{ color:#A9B0BA; font-style:italic; font-weight:400; opacity:1; }
   .input-error{ border-color:var(--danger) !important; box-shadow:0 0 0 3px var(--danger-dim) !important; }
   .hint{ font-size:13px; color:var(--text-dim); line-height:1.55; }
 
