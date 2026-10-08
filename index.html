@@ -342,7 +342,13 @@
   .ver-fotos-grid img{ width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; border:1px solid #bbb; background:#eee; display:block; }
   .ver-fotos-grid figcaption{ font-size:11.5px; color:#222; margin-top:4px; text-align:center; line-height:1.3; }
   .lightbox{ position:fixed; inset:0; z-index:6000; background:rgba(0,0,0,.93); display:flex; align-items:center; justify-content:center; flex-direction:column; }
-  .lightbox img{ max-width:96vw; max-height:82vh; object-fit:contain; }
+  .lightbox{ touch-action:none; user-select:none; -webkit-user-select:none; }
+  .lightbox img{ max-width:96vw; max-height:82vh; object-fit:contain; will-change:transform; -webkit-user-drag:none; transform-origin:center center; }
+  .lightbox img.anim{ transition:transform .18s ease-out; }
+  .lightbox .lb-zoom{ position:absolute; top:14px; left:50%; transform:translateX(-50%); display:flex; gap:8px; align-items:center; }
+  .lightbox .lb-zoom button{ position:static; width:48px; height:48px; font-size:24px; }
+  .lightbox .lb-zoom #lbAjustar{ width:auto; padding:0 16px; font-size:14px; border-radius:24px; font-weight:700; }
+  .lightbox .lb-zoom .lb-nivel{ color:#fff; font-size:13px; min-width:46px; text-align:center; font-family:var(--mono); }
   .lightbox .lb-cap{ color:#fff; margin-top:12px; font-size:15px; text-align:center; padding:0 60px; }
   .lightbox button{ position:absolute; width:54px; height:54px; border-radius:50%; border:none; background:rgba(255,255,255,.16); color:#fff; font-size:26px; cursor:pointer; }
   .lightbox .lb-x{ top:14px; right:14px; } .lightbox .lb-prev{ left:12px; top:50%; } .lightbox .lb-next{ right:12px; top:50%; }
@@ -821,6 +827,12 @@
 </div>
 <div id="lightbox" class="lightbox" hidden>
   <button class="lb-x" id="lbCerrar" aria-label="Cerrar foto">✕</button>
+  <div class="lb-zoom">
+    <button id="lbMenos" aria-label="Alejar">−</button>
+    <span class="lb-nivel" id="lbNivel">100%</span>
+    <button id="lbMas" aria-label="Acercar">+</button>
+    <button id="lbAjustar" aria-label="Ajustar a la pantalla">Ajustar</button>
+  </div>
   <button class="lb-prev" id="lbPrev" aria-label="Foto anterior">‹</button>
   <img id="lbImg" alt="">
   <div class="lb-cap" id="lbCap"></div>
@@ -1465,6 +1477,7 @@ function verZoomCambiar(d){
 function abrirFotoVer(k){ lbIndice = k; lbEditable = false; mostrarFotoVer(); document.getElementById('lightbox').hidden = false; }
 function mostrarFotoVer(){
   const f = verFotos[lbIndice]; if(!f) return;
+  lbReset();   // cada foto se abre ajustada a la pantalla
   document.getElementById('lbAcciones').hidden = !lbEditable;
   if(lbEditable) document.getElementById('lbReemplazar').hidden = !slotDeFoto(f);   // las fotos adicionales no tienen casillero: se borran y se suben de nuevo
   document.getElementById('lbImg').src = workerUrl(f.storage_path);
@@ -1487,7 +1500,90 @@ document.querySelectorAll('.ver-chip[data-sec]').forEach(b => b.addEventListener
 document.getElementById('lbCerrar').addEventListener('click', cerrarFotoVer);
 document.getElementById('lbPrev').addEventListener('click', () => fotoVerIr(-1));
 document.getElementById('lbNext').addEventListener('click', () => fotoVerIr(1));
-document.getElementById('lightbox').addEventListener('click', e => { if(e.target.id === 'lightbox') cerrarFotoVer(); });
+document.getElementById('lightbox').addEventListener('click', e => { if(e.target.id === 'lightbox' && Date.now() > lbZ.ignorarClickHasta) cerrarFotoVer(); });
+
+/* ---------- Zoom de la foto: pellizcar, doble toque, arrastrar, rueda y botones ---------- */
+const lbZ = { s: 1, x: 0, y: 0, ptrs: new Map(), d0: 0, s0: 1, x0: 0, y0: 0, ini: null, mov: false, ultimoToque: { t: 0, x: 0, y: 0 }, ignorarClickHasta: 0 };
+const LB_MAX = 6;
+function lbImg(){ return document.getElementById('lbImg'); }
+function lbAplicar(animar){
+  const img = lbImg();
+  img.classList.toggle('anim', !!animar);
+  img.style.transform = lbZ.s === 1 && lbZ.x === 0 && lbZ.y === 0 ? '' : `translate(${lbZ.x}px, ${lbZ.y}px) scale(${lbZ.s})`;
+  img.style.cursor = lbZ.s > 1 ? 'grab' : 'zoom-in';
+  document.getElementById('lbNivel').textContent = Math.round(lbZ.s * 100) + '%';
+}
+function lbReset(){ lbZ.s = 1; lbZ.x = 0; lbZ.y = 0; lbZ.ptrs.clear(); lbAplicar(false); }
+// No deja que la foto "se escape" de la pantalla al arrastrarla
+function lbLimitar(){
+  const img = lbImg();
+  const lx = Math.max(0, (img.clientWidth * lbZ.s - window.innerWidth) / 2);
+  const ly = Math.max(0, (img.clientHeight * lbZ.s - window.innerHeight) / 2);
+  lbZ.x = Math.min(lx, Math.max(-lx, lbZ.x)); lbZ.y = Math.min(ly, Math.max(-ly, lbZ.y));
+}
+// Cambia el zoom manteniendo fijo el punto (cx, cy) de la pantalla, como al pellizcar
+function lbZoomEn(nuevo, cx, cy, animar){
+  nuevo = Math.min(LB_MAX, Math.max(1, nuevo));
+  const r = lbImg().getBoundingClientRect();
+  const bx = r.left + r.width / 2 - lbZ.x, by = r.top + r.height / 2 - lbZ.y;   // centro de la foto sin zoom
+  const fx = cx - bx, fy = cy - by, k = nuevo / lbZ.s;
+  lbZ.x = fx - (fx - lbZ.x) * k; lbZ.y = fy - (fy - lbZ.y) * k; lbZ.s = nuevo;
+  if(lbZ.s === 1){ lbZ.x = 0; lbZ.y = 0; } else lbLimitar();
+  lbAplicar(animar);
+}
+const lbCentro = () => { const r = lbImg().getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+document.getElementById('lbMas').addEventListener('click', () => { const [cx, cy] = lbCentro(); lbZoomEn(lbZ.s * 1.5, cx, cy, true); });
+document.getElementById('lbMenos').addEventListener('click', () => { const [cx, cy] = lbCentro(); lbZoomEn(lbZ.s / 1.5, cx, cy, true); });
+document.getElementById('lbAjustar').addEventListener('click', () => { lbZ.s = 1; lbZ.x = 0; lbZ.y = 0; lbAplicar(true); });
+document.getElementById('lightbox').addEventListener('wheel', e => {
+  if(document.getElementById('lightbox').hidden) return;
+  e.preventDefault();
+  lbZoomEn(lbZ.s * Math.exp(-e.deltaY * 0.002), e.clientX, e.clientY, false);
+}, { passive: false });
+document.getElementById('lightbox').addEventListener('pointerdown', e => {
+  if(e.target.closest('button')) return;
+  const L = lbZ;
+  L.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if(L.ptrs.size === 1){ L.ini = { x: e.clientX, y: e.clientY, t: Date.now() }; L.x0 = L.x; L.y0 = L.y; L.mov = false; }
+  if(L.ptrs.size === 2){
+    const [a, b] = [...L.ptrs.values()];
+    L.d0 = Math.hypot(a.x - b.x, a.y - b.y) || 1; L.s0 = L.s; L.mov = true;
+  }
+});
+document.addEventListener('pointermove', e => {
+  const L = lbZ;
+  if(document.getElementById('lightbox').hidden || !L.ptrs.has(e.pointerId)) return;
+  L.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if(L.ptrs.size === 2){                                   // pellizco: acerca o aleja
+    const [a, b] = [...L.ptrs.values()];
+    lbZoomEn(L.s0 * Math.hypot(a.x - b.x, a.y - b.y) / L.d0, (a.x + b.x) / 2, (a.y + b.y) / 2, false);
+  }else if(L.ptrs.size === 1 && L.ini){
+    const dx = e.clientX - L.ini.x, dy = e.clientY - L.ini.y;
+    if(Math.abs(dx) > 8 || Math.abs(dy) > 8) L.mov = true;
+    if(L.s > 1){ L.x = L.x0 + dx; L.y = L.y0 + dy; lbLimitar(); lbAplicar(false); }   // con zoom: arrastrar mueve la foto
+  }
+});
+function lbSoltar(e){
+  const L = lbZ;
+  if(!L.ptrs.has(e.pointerId)) return;
+  const eraUno = L.ptrs.size === 1;
+  L.ptrs.delete(e.pointerId);
+  if(L.mov) L.ignorarClickHasta = Date.now() + 350;       // un arrastre no debe contar como "tocar el fondo para cerrar"
+  if(!eraUno || !L.ini) { if(L.ptrs.size === 1){ const p = [...L.ptrs.values()][0]; L.ini = { x: p.x, y: p.y, t: Date.now() }; L.x0 = L.x; L.y0 = L.y; } return; }
+  const dx = e.clientX - L.ini.x, dy = e.clientY - L.ini.y;
+  if(L.s === 1 && Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5){ fotoVerIr(dx < 0 ? 1 : -1); L.ini = null; return; }   // deslizar: foto siguiente / anterior
+  if(!L.mov && e.type === 'pointerup' && e.target.closest && !e.target.closest('button')){
+    const ahora = Date.now(), u = L.ultimoToque;
+    if(ahora - u.t < 320 && Math.hypot(e.clientX - u.x, e.clientY - u.y) < 30){        // doble toque: acerca / ajusta
+      if(L.s > 1) { L.s = 1; L.x = 0; L.y = 0; lbAplicar(true); } else lbZoomEn(2.5, e.clientX, e.clientY, true);
+      L.ultimoToque = { t: 0, x: 0, y: 0 };
+    }else L.ultimoToque = { t: ahora, x: e.clientX, y: e.clientY };
+  }
+  L.ini = null;
+}
+document.addEventListener('pointerup', lbSoltar);
+document.addEventListener('pointercancel', lbSoltar);
+window.addEventListener('resize', () => { if(!document.getElementById('lightbox').hidden){ lbLimitar(); lbAplicar(false); } });
 document.addEventListener('keydown', e => {
   if(!document.getElementById('lightbox').hidden){
     if(e.key === 'Escape') cerrarFotoVer(); else if(e.key === 'ArrowLeft') fotoVerIr(-1); else if(e.key === 'ArrowRight') fotoVerIr(1);
