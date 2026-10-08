@@ -173,8 +173,8 @@
   .foto-slot.filled .slot-label{ color:var(--text); }
   .foto-slot .badge-ok{ position:absolute; top:6px; right:6px; background:var(--brand); color:var(--on-brand); width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-sm); }
   .foto-slot .badge-ok svg{ width:12px; height:12px; stroke-width:3; }
-  .foto-slot .remove-x{ position:absolute; top:6px; left:6px; background:rgba(0,0,0,.65); color:#fff; border:none; border-radius:7px; width:22px; height:22px; cursor:pointer; z-index:5; display:flex; align-items:center; justify-content:center; }
-  .foto-slot .remove-x svg{ width:12px; height:12px; }
+  .foto-slot .remove-x{ position:absolute; top:6px; left:6px; background:rgba(0,0,0,.65); color:#fff; border:none; border-radius:8px; width:30px; height:30px; cursor:pointer; z-index:5; display:flex; align-items:center; justify-content:center; }
+  .foto-slot .remove-x svg{ width:14px; height:14px; }
   .foto-slot .uploading{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; background:rgba(10,12,15,.75); color:#fff; font-size:10.5px; font-weight:600; }
   .spinner{ width:20px; height:20px; border:2.5px solid rgba(255,255,255,.25); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
@@ -346,6 +346,10 @@
   .lightbox .lb-cap{ color:#fff; margin-top:12px; font-size:15px; text-align:center; padding:0 60px; }
   .lightbox button{ position:absolute; width:54px; height:54px; border-radius:50%; border:none; background:rgba(255,255,255,.16); color:#fff; font-size:26px; cursor:pointer; }
   .lightbox .lb-x{ top:14px; right:14px; } .lightbox .lb-prev{ left:12px; top:50%; } .lightbox .lb-next{ right:12px; top:50%; }
+  .lightbox .lb-acciones{ position:absolute; left:0; right:0; bottom:20px; display:flex; gap:12px; justify-content:center; flex-wrap:wrap; padding:0 14px; }
+  .lightbox .lb-acciones button{ position:static; width:auto; height:50px; border-radius:12px; padding:0 24px; font-size:16px; font-weight:700; background:rgba(255,255,255,.18); color:#fff; }
+  .lightbox .lb-acciones .peligro{ background:#D32F2F; }
+  .extra-fotos-row img{ cursor:zoom-in; }
 
   /* ================= TABLET / PANTALLAS GRANDES ================= */
   @media (min-width:720px){
@@ -821,6 +825,10 @@
   <img id="lbImg" alt="">
   <div class="lb-cap" id="lbCap"></div>
   <button class="lb-next" id="lbNext" aria-label="Foto siguiente">›</button>
+  <div class="lb-acciones" id="lbAcciones" hidden>
+    <button id="lbReemplazar">Reemplazar foto</button>
+    <button id="lbEliminar" class="peligro">Eliminar foto</button>
+  </div>
 </div>
 
 <!-- ============================================================ NAVEGACIÓN INFERIOR ============================================================ -->
@@ -1454,9 +1462,11 @@ function verZoomCambiar(d){
   const doc = document.getElementById('verDoc'); if(doc) doc.style.zoom = verZoom;
   try{ localStorage.setItem('sehinco_ver_zoom', String(verZoom)); }catch(e){}
 }
-function abrirFotoVer(k){ lbIndice = k; mostrarFotoVer(); document.getElementById('lightbox').hidden = false; }
+function abrirFotoVer(k){ lbIndice = k; lbEditable = false; mostrarFotoVer(); document.getElementById('lightbox').hidden = false; }
 function mostrarFotoVer(){
   const f = verFotos[lbIndice]; if(!f) return;
+  document.getElementById('lbAcciones').hidden = !lbEditable;
+  if(lbEditable) document.getElementById('lbReemplazar').hidden = !slotDeFoto(f);   // las fotos adicionales no tienen casillero: se borran y se suben de nuevo
   document.getElementById('lbImg').src = workerUrl(f.storage_path);
   document.getElementById('lbCap').textContent = `${f.etiqueta || ''} (${lbIndice + 1} / ${verFotos.length})`.trim();
 }
@@ -1784,10 +1794,11 @@ function renderFotosList(fotos){
     const inner = found
       ? (() => {
           const url = workerUrl(found.storage_path);
-          return `<div class="thumb-wrap"><img src="${url}"></div><span class="badge-ok">${icon('check-circle')}</span><button class="remove-x" onclick="event.stopPropagation(); eliminarFotoSlot('${found.id}','${found.storage_path}')">${icon('close')}</button>`;
+          return `<div class="thumb-wrap"><img src="${url}"></div><span class="badge-ok">${icon('check-circle')}</span><button class="remove-x" aria-label="Eliminar foto" onclick="event.stopPropagation(); eliminarFotoSlot('${found.id}','${found.storage_path}')">${icon('close')}</button>`;
         })()
       : `<div class="thumb-wrap"><span class="placeholder-icon">${icon('camera')}</span></div>`;
-    return `<div class="foto-slot ${found?'filled':''}" id="slotwrap_${slot.key}" onclick="abrirFotoChoice('${slot.key.replace(/'/g,"\\'")}','${slot.label.replace(/'/g,"\\'")}')">
+    // Casillero con foto: al tocarlo se ve en grande (con Reemplazar / Eliminar). Casillero vacío: tomar o elegir foto.
+    return `<div class="foto-slot ${found?'filled':''}" id="slotwrap_${slot.key}" onclick="${found ? `verFotoForm('${found.id}')` : `abrirFotoChoice('${slot.key.replace(/'/g,"\\'")}','${slot.label.replace(/'/g,"\\'")}')`}">
       ${inner}
       <div class="slot-label">${slot.label}</div>
     </div>`;
@@ -1800,9 +1811,9 @@ function renderFotosList(fotos){
     : extras.map(f => {
         const url = workerUrl(f.storage_path);
         return `<div class="extra-fotos-row">
-          <img src="${url}">
-          <span>${f.etiqueta || 'Sin etiqueta'}</span>
-          <button class="del-btn" onclick="eliminarFotoSlot('${f.id}', '${f.storage_path}')">${icon('close')}</button>
+          <img src="${url}" onclick="verFotoForm('${f.id}')" alt="">
+          <span onclick="verFotoForm('${f.id}')" style="cursor:pointer;">${escH(f.etiqueta) || 'Sin etiqueta'}</span>
+          <button class="del-btn" aria-label="Eliminar foto" onclick="eliminarFotoSlot('${f.id}', '${f.storage_path}')">${icon('close')}</button>
         </div>`;
       }).join('');
 }
@@ -1936,17 +1947,53 @@ async function subirFotoExtraArchivo(file, etiqueta){
   document.getElementById('fotoEtiqueta').value = '';
 }
 
+// Borra primero el registro de la foto y después el archivo: si algo falla a mitad de camino,
+// queda un archivo suelto (inofensivo) y no una foto "fantasma" que apunta a un archivo borrado.
+// Devuelve true si se borró.
 async function eliminarFotoSilencioso(fotoId, path){
   try{
+    const { error } = await api('/fotos/' + fotoId, { method:'DELETE' });
+    if(error){ console.error(error); return false; }
     await eliminarFotoWorker(path);
-    await api('/fotos/' + fotoId, { method:'DELETE' });
-  }catch(e){ console.error(e); }
+    return true;
+  }catch(e){ console.error(e); return false; }
 }
 
 async function eliminarFotoSlot(fotoId, path){
-  await eliminarFotoSilencioso(fotoId, path);
+  if(!confirm('¿Eliminar esta foto? No se puede deshacer.')) return false;
+  const ok = await eliminarFotoSilencioso(fotoId, path);
+  if(!ok){ showToast('No se pudo eliminar la foto. Revisa tu conexión.', 'error'); return false; }
   await refreshFotos(window.editingId);
+  showToast('Foto eliminada');
+  return true;
 }
+
+/* ---------- Ver en grande una foto del formulario (con Reemplazar / Eliminar) ---------- */
+let lbEditable = false;   // true cuando la foto se abre desde el formulario (se puede reemplazar o borrar)
+function verFotoForm(fotoId){
+  const orden = (currentFotos || []).slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
+  const k = orden.findIndex(f => f.id === fotoId);
+  if(k < 0) return;
+  verFotos = orden; lbIndice = k; lbEditable = true;
+  mostrarFotoVer();
+  document.getElementById('lightbox').hidden = false;
+}
+// Casillero al que pertenece una foto (null si es una foto adicional)
+function slotDeFoto(f){
+  const slots = getFotoSlots();
+  const idx = slots.findIndex((s, i) => f.orden === i + 1 || f.etiqueta === s.label);
+  return idx >= 0 ? slots[idx] : null;
+}
+document.getElementById('lbEliminar').addEventListener('click', async () => {
+  const f = verFotos[lbIndice]; if(!f) return;
+  if(await eliminarFotoSlot(f.id, f.storage_path)) cerrarFotoVer();
+});
+document.getElementById('lbReemplazar').addEventListener('click', () => {
+  const f = verFotos[lbIndice]; if(!f) return;
+  const slot = slotDeFoto(f);
+  cerrarFotoVer();
+  if(slot) abrirFotoChoice(slot.key, slot.label);
+});
 
 /* ============================================================
    NAVEGACIÓN ENTRE VISTAS (Nuevo / Registros)
