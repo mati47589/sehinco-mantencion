@@ -1840,7 +1840,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-08 · hojas carta';
+const APP_VERSION = '2026-10-08 · hojas carta v2 (tablet)';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -1912,7 +1912,10 @@ async function imprimirOT(rec, op){
    el pie (dirección, fono, correo) se va solo a una hoja nueva. Se mide como saldría en papel y, si hace falta,
    se achica la hoja lo justo (nunca bajo ZOOM_MIN_HOJA para que se siga leyendo bien). Si aun así no cabe, se deja
    fluir en 2 hojas, pero con el pie pegado al contenido. */
-const ALTO_HOJA_PX = 975;      // hoja CARTA con márgenes de 8 mm: 995 px útiles, menos ~20 px de holgura
+// Hoja CARTA con márgenes de 8 mm: 995 px útiles. Se deja ~12 % de holgura porque cada dispositivo dibuja el texto con
+// tipografías distintas: en un Galaxy Tab el mismo texto sale más alto que en un PC y con 975 el pie caía a una hoja nueva.
+// Probado con Chrome real (PDF) y texto hasta 17 % más alto que lo normal: siempre 3 hojas.
+const ALTO_HOJA_PX = 870;
 const ZOOM_MIN_HOJA = 0.78;
 async function ajustarHojasAlPapel(area){
   area.classList.add('midiendo');
