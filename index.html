@@ -413,6 +413,14 @@
   #printArea .doc-page{ padding:14px 20px; }   /* en papel el margen lo da la hoja (@page): así sobra más espacio útil */
   /* Para medir las hojas "como saldrían en papel" sin mostrarlas en pantalla (ver ajustarHojasAlPapel) */
   #printArea.midiendo{ display:block !important; position:fixed; left:-99999px; top:0; width:755px; visibility:hidden; }
+  /* Para fotografiar las hojas al guardar el PDF en el PC (ver pcGenerarPdf): queda bajo la ventana de "Guardar en mi PC", que es opaca */
+  #printArea.exportando{ display:block !important; position:fixed; left:0; top:0; width:755px; z-index:5000; background:#fff; }
+  .pc-overlay{ background:var(--surface-2); z-index:5600; align-items:flex-start; overflow:auto; }
+  .pc-overlay .po-box{ max-width:640px; margin:auto; }
+  .pc-fila{ display:flex; gap:10px; align-items:flex-start; padding:9px 2px; border-top:1px solid var(--border); font-size:14px; }
+  .pc-fila input{ width:20px; height:20px; accent-color:var(--accent); flex-shrink:0; margin-top:2px; }
+  .pc-fila small{ display:block; color:var(--text-dim); font-size:12px; }
+  #pcEstado{ white-space:pre-wrap; font-family:var(--mono); font-size:12.5px; }
   /* El pie (dirección, fono, correo) nunca debe quedar solo en una hoja nueva */
   .doc-pie{ break-inside:avoid; page-break-inside:avoid; break-before:avoid; page-break-before:avoid; }
   .doc-page:last-child{ page-break-after:auto; }
@@ -809,6 +817,7 @@
 <div id="listView">
   <div class="list-toolbar">
     <div class="search-wrap"><span class="search-icon"></span><input type="text" id="searchBox" placeholder="Buscar por OT, cliente o técnico..."></div>
+    <button class="icon-btn" id="btnPc" title="Guardar OT nuevas en mis carpetas del PC" hidden></button>
     <button class="icon-btn" id="btnExport" title="Exportar CSV"></button>
   </div>
   <div class="list-filters">
@@ -852,6 +861,17 @@
     <label class="po-fila" id="poFilaFotos"><input type="checkbox" id="poFotos"><span id="poFotosTxt">Fotos</span></label>
     <div class="po-botones"><button id="poCancelar">Cancelar</button><button id="poImprimir" class="primario">Imprimir</button></div>
     <p class="po-version" id="poVersion"></p>
+  </div>
+</div>
+<div id="pcOv" class="po-overlay pc-overlay" hidden>
+  <div class="po-box" role="dialog" aria-modal="true" aria-labelledby="pcTitulo">
+    <h3 id="pcTitulo">Guardar OT nuevas en mis carpetas del PC</h3>
+    <p>Para las OT hechas en la tablet que aún no están en la carpeta del año: crea <b>CLIENTE / OT número</b> con el informe en PDF (el mismo de imprimir) y todas sus fotos. Solo en Chrome o Edge del computador.</p>
+    <p id="pcCarpeta">Aún no elegiste la carpeta del año (por ejemplo «INFORMES TECNICOS Y FOTOS 2026»).</p>
+    <div class="po-botones"><button id="pcElegir">Elegir carpeta del año…</button><button id="pcBuscar" class="primario" disabled>Buscar OT nuevas</button></div>
+    <div id="pcLista" style="margin-top:12px;"></div>
+    <div class="po-botones"><button id="pcCerrar">Cerrar</button><button id="pcGuardar" class="primario" hidden>Guardar</button></div>
+    <p id="pcEstado"></p>
   </div>
 </div>
 <div id="lightbox" class="lightbox" hidden>
@@ -910,6 +930,7 @@ document.getElementById('navList').querySelector('.tab-icon').innerHTML = icon('
 document.getElementById('adminIcon').innerHTML = icon('lock');
 document.querySelector('.search-icon').innerHTML = icon('search');
 document.getElementById('btnExport').innerHTML = icon('download');
+document.getElementById('btnPc').innerHTML = icon('save');
 document.getElementById('fcIconCam').innerHTML = icon('camera');
 document.getElementById('fcIconGal').innerHTML = icon('image');
 
@@ -1929,7 +1950,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-09 · lista liviana v4';
+const APP_VERSION = '2026-10-09 · guardar en PC v1';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -2053,6 +2074,204 @@ async function exportCSV(){
   URL.revokeObjectURL(url);
 }
 document.getElementById('btnExport').addEventListener('click', exportCSV);
+
+/* ============================================================
+   GUARDAR EN LAS CARPETAS DEL PC (solo administrador, Chrome/Edge de escritorio)
+   Para cada OT creada en la tablet que aún no está en la carpeta del año, crea  CLIENTE / OT número  con
+   - "Informe OT número (tablet).pdf": datos de ingreso + informe (+ guía eléctrica) con el mismo formato de imprimir
+   - todas sus fotos, con su descripción en el nombre ("1. MOTOR ANTES.jpg")
+   El PDF se arma fotografiando las hojas (html2canvas + jsPDF, que se bajan de internet solo al usarlo).
+   ============================================================ */
+const PC = { raiz: null, nuevas: [], clientes: new Map(), ocupado: false };
+const PC_RE_OT = /^(?:OT[_\s-]?(\d{4,7})|(\d{5,7}))(?!\d)/i;
+const PC_ALTO_HOJA = 995, PC_ANCHO_HOJA = 755;      // área útil de una hoja CARTA con márgenes de 8 mm, en px
+function pcClave(s){
+  let t = (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/&/g, ' Y ').replace(/\./g, '').replace(/[,;:()'"\-\/]/g, ' ').replace(/\s+/g, ' ').trim();
+  for(let i = 0; i < 2; i++) t = t.replace(/\s(S ?A|S ?P ?A|SPA|LTDA|LIMITADA|E ?I ?R ?L|CIA|Y CIA)$/, '').trim();
+  return t.replace(/[^A-Z0-9]/g, '');
+}
+function pcNombreSeguro(s){ return String(s || '').replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, ''); }
+function pcEstado(txt, tipo){ const e = document.getElementById('pcEstado'); e.textContent = txt || ''; e.style.color = tipo === 'err' ? 'var(--danger, #c0392b)' : ''; }
+// Recordar la carpeta elegida (IndexedDB de esta página)
+function pcIdb(){ return new Promise((res, rej) => { const r = indexedDB.open('sehinco_app_pc', 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function pcKvGet(k){ try{ const db = await pcIdb(); return await new Promise(res => { const t = db.transaction('kv').objectStore('kv').get(k); t.onsuccess = () => res(t.result); t.onerror = () => res(null); }); }catch(e){ return null; } }
+async function pcKvSet(k, v){ try{ const db = await pcIdb(); await new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite').objectStore('kv').put(v, k); t.onsuccess = res; t.onerror = () => rej(t.error); }); }catch(e){ console.warn('no se pudo recordar la carpeta', e); } }
+async function pcAbrir(){
+  document.getElementById('pcOv').hidden = false;
+  if(!PC.raiz){ const h = await pcKvGet('carpetaPc'); if(h) PC.raiz = h; }
+  pcPintarCarpeta();
+}
+function pcPintarCarpeta(){
+  document.getElementById('pcCarpeta').textContent = PC.raiz ? `Carpeta: «${PC.raiz.name}»` : 'Aún no elegiste la carpeta del año (por ejemplo «INFORMES TECNICOS Y FOTOS 2026»).';
+  document.getElementById('pcBuscar').disabled = !PC.raiz || PC.ocupado;
+}
+async function pcElegir(){
+  try{
+    const h = await window.showDirectoryPicker({ id: 'sehinco-pc', mode: 'readwrite' });
+    PC.raiz = h; await pcKvSet('carpetaPc', h); PC.nuevas = []; document.getElementById('pcLista').innerHTML = '';
+    document.getElementById('pcGuardar').hidden = true; pcEstado(''); pcPintarCarpeta();
+  }catch(e){ if(e.name !== 'AbortError') pcEstado('No se pudo abrir la carpeta: ' + e.message, 'err'); }
+}
+async function pcPermiso(){
+  if(!PC.raiz) return false;
+  if(PC.raiz.requestPermission){ const p = await PC.raiz.requestPermission({ mode: 'readwrite' }); if(p !== 'granted'){ pcEstado('Sin permiso para escribir en la carpeta. Vuelve a pulsar el botón y acepta.', 'err'); return false; } }
+  return true;
+}
+// Qué hay en la carpeta del año: números de OT ya guardados y carpetas de cliente
+async function pcEscanear(raiz){
+  const numeros = new Set(), clientes = new Map();
+  for await (const [n1, h1] of raiz.entries()){
+    if(h1.kind !== 'directory') continue;
+    const m1 = n1.match(PC_RE_OT);
+    if(m1){ numeros.add(m1[1] || m1[2]); continue; }
+    clientes.set(n1, { nombre: n1, handle: h1, clave: pcClave(n1) });
+    for await (const [n2, h2] of h1.entries()){
+      if(h2.kind !== 'directory') continue;
+      const m2 = n2.match(PC_RE_OT); if(m2) numeros.add(m2[1] || m2[2]);
+    }
+  }
+  return { numeros, clientes };
+}
+// Carpeta de cliente que corresponde a un nombre: igual (sin tildes/puntos/S.A.) o, si hay una sola, que lo contenga
+function pcCarpetaDeCliente(nombreCliente){
+  const k = pcClave(nombreCliente); if(!k) return null;
+  const todas = [...PC.clientes.values()];
+  const exactas = todas.filter(c => c.clave === k);
+  if(exactas.length) return exactas[0];
+  const parecidas = todas.filter(c => c.clave.length >= 3 && k.length >= 3 && (c.clave.includes(k) || k.includes(c.clave)));
+  return parecidas.length === 1 ? parecidas[0] : null;
+}
+async function pcBuscar(){
+  if(PC.ocupado) return;
+  if(!await pcPermiso()) return;
+  PC.ocupado = true; pcPintarCarpeta(); pcEstado('Revisando la carpeta y la lista de OT…');
+  try{
+    const { numeros, clientes } = await pcEscanear(PC.raiz);
+    PC.clientes = clientes;
+    const { data, error } = await api('/resumen');
+    if(error) throw new Error(error.message || 'no se pudo consultar la lista de OT');
+    const anio = (PC.raiz.name.match(/(20\d\d)/) || [])[1];
+    const porOt = new Map();
+    (data || []).forEach(r => { if(!r.fecha || (anio && r.fecha.slice(0, 4) !== anio) || numeros.has(String(r.ot))) return; const p = porOt.get(r.ot); if(!p || (r.created_at || '') > (p.created_at || '')) porOt.set(r.ot, r); });
+    PC.nuevas = [...porOt.values()].sort((a, b) => String(b.ot).localeCompare(String(a.ot), 'es', { numeric: true }));
+    document.getElementById('pcLista').innerHTML = PC.nuevas.map((r, i) => {
+      const cli = (r.cliente || '').trim() || 'SIN CLIENTE', c = pcCarpetaDeCliente(cli);
+      return `<label class="pc-fila"><input type="checkbox" class="pcChk" data-i="${i}" checked><span><b>OT ${escH(r.ot)}</b> · ${escH(cli)} · ${escH(r.fecha || '')}<small>Va a: ${c ? escH(c.nombre) : escH(pcNombreSeguro(cli.toUpperCase())) + ' (carpeta nueva)'} / OT ${escH(r.ot)}</small></span></label>`;
+    }).join('');
+    document.getElementById('pcGuardar').hidden = !PC.nuevas.length;
+    document.getElementById('pcGuardar').textContent = `Guardar ${PC.nuevas.length} OT`;
+    pcEstado(PC.nuevas.length ? `${PC.nuevas.length} OT de la app no están en la carpeta. Marca las que quieras y pulsa «Guardar».` : `Todo al día ✓ — las OT de la app${anio ? ' de ' + anio : ''} ya están en la carpeta.`);
+  }catch(e){ console.error(e); pcEstado('Error: ' + (e.message || e), 'err'); }
+  finally{ PC.ocupado = false; pcPintarCarpeta(); }
+}
+function pcCargarScript(src){ return new Promise((ok, ko) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => ko(new Error('No se pudo bajar ' + src + '. ¿Hay internet?')); document.head.appendChild(s); }); }
+async function pcCargarLibs(){
+  if(!window.html2canvas) await pcCargarScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js');
+  if(!(window.jspdf && window.jspdf.jsPDF)) await pcCargarScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+}
+// Dónde cortar una hoja demasiado alta: al final del último bloque (tabla, título…) que cabe en una página
+function pcCortes(pg, H){
+  const top = pg.getBoundingClientRect().top;
+  const fines = [...pg.children].map(c => c.getBoundingClientRect().bottom - top).filter(b => b > 0);
+  const out = []; let ini = 0;
+  while(ini < H - 1){
+    if(H - ini <= PC_ALTO_HOJA){ out.push([ini, H]); break; }
+    const limite = ini + PC_ALTO_HOJA;
+    const ok = fines.filter(b => b <= limite && b > ini + 150);
+    const fin = ok.length ? Math.max(...ok) : limite;
+    out.push([ini, fin]); ini = fin;
+  }
+  return out;
+}
+async function pcGenerarPdf(rec){
+  await pcCargarLibs();
+  const area = document.getElementById('printArea');
+  area.classList.add('exportando');
+  try{
+    area.innerHTML = pageDatosIngreso(rec) + pageInforme(rec) + (rec.aplicaElectrica ? pageElectrica(rec) : '');
+    await Promise.all([...area.querySelectorAll('img')].map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; })));
+    const pdf = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
+    const MARG = 8 / 25.4 * 72, PT = (612 - 2 * MARG) / PC_ANCHO_HOJA, ESC = 2;
+    let primera = true;
+    for(const pg of area.querySelectorAll('.doc-page')){
+      const H = pg.getBoundingClientRect().height;
+      const lienzo = await window.html2canvas(pg, { scale: ESC, backgroundColor: '#fff', useCORS: true, logging: false, scrollX: 0, scrollY: 0 });
+      // Cabe en una hoja (si hace falta, un poco más chica, como al imprimir); si no, se corta en bloques
+      const trozos = H <= PC_ALTO_HOJA / ZOOM_MIN_HOJA ? [{ y0: 0, y1: H, k: Math.min(1, PC_ALTO_HOJA / H) }] : pcCortes(pg, H).map(([y0, y1]) => ({ y0, y1, k: 1 }));
+      for(const t of trozos){
+        const sy = Math.round(t.y0 * ESC), alto = Math.max(1, Math.min(lienzo.height - sy, Math.round((t.y1 - t.y0) * ESC)));
+        const c = document.createElement('canvas'); c.width = lienzo.width; c.height = alto;
+        const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+        cx.drawImage(lienzo, 0, sy, lienzo.width, alto, 0, 0, c.width, alto);
+        if(!primera) pdf.addPage(); primera = false;
+        pdf.addImage(c.toDataURL('image/jpeg', 0.92), 'JPEG', MARG, MARG, PC_ANCHO_HOJA * PT * t.k, (alto / ESC) * PT * t.k);
+      }
+    }
+    return pdf.output('blob');
+  }finally{ area.innerHTML = ''; area.classList.remove('exportando'); }
+}
+async function pcEscribir(dir, nombre, blob){
+  const fh = await dir.getFileHandle(nombre, { create: true });
+  const w = await fh.createWritable(); await w.write(blob); await w.close();
+}
+async function pcGuardarOT(fila){
+  const { data, error } = await api('/ingresos/' + fila.id + '?join=full');
+  if(error || !data) throw new Error((error && error.message) || 'no se pudo leer la OT');
+  const nombreCli = (data.cliente || '').trim() || 'SIN CLIENTE';
+  let cli = pcCarpetaDeCliente(nombreCli);
+  if(!cli){
+    const nombre = pcNombreSeguro(nombreCli.toUpperCase()) || 'SIN CLIENTE';
+    cli = { nombre, handle: await PC.raiz.getDirectoryHandle(nombre, { create: true }), clave: pcClave(nombre) };
+    PC.clientes.set(nombre, cli);
+  }
+  const nombreOT = 'OT ' + pcNombreSeguro(data.ot);
+  const otDir = await cli.handle.getDirectoryHandle(nombreOT, { create: true });
+  try{
+    const pdf = await pcGenerarPdf(escRec(mapFromSupabase(data)));
+    await pcEscribir(otDir, `Informe OT ${pcNombreSeguro(data.ot)} (tablet).pdf`, pdf);
+    const fotos = (data.fotos || []).slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    const usados = new Set(); let nFotos = 0;
+    for(let i = 0; i < fotos.length; i += 4){
+      await Promise.all(fotos.slice(i, i + 4).map(async (f, j) => {
+        const r = await fetch(workerUrl(f.storage_path)); if(!r.ok) throw new Error('foto ' + (i + j + 1) + ': HTTP ' + r.status);
+        const blob = await r.blob();
+        const ext = /png/.test(blob.type) ? '.png' : /webp/.test(blob.type) ? '.webp' : '.jpg';
+        const base = `${i + j + 1}. ${pcNombreSeguro(f.etiqueta) || 'FOTO'}`; let nombre = base + ext, n = 2;
+        while(usados.has(nombre.toLowerCase())) nombre = `${base} (${n++})${ext}`;
+        usados.add(nombre.toLowerCase());
+        await pcEscribir(otDir, nombre, blob); nFotos++;
+      }));
+    }
+    return { carpeta: `${cli.nombre}/${nombreOT}`, fotos: nFotos };
+  }catch(e){
+    // No dejar una carpeta de OT a medias: la próxima búsqueda la daría por guardada
+    try{ await cli.handle.removeEntry(nombreOT, { recursive: true }); }catch(e2){}
+    throw e;
+  }
+}
+async function pcGuardar(){
+  if(PC.ocupado) return;
+  const elegidas = [...document.querySelectorAll('.pcChk')].filter(c => c.checked).map(c => PC.nuevas[+c.dataset.i]);
+  if(!elegidas.length){ pcEstado('No hay ninguna OT marcada.', 'err'); return; }
+  if(!await pcPermiso()) return;
+  PC.ocupado = true; pcPintarCarpeta(); document.getElementById('pcGuardar').disabled = true;
+  const fallos = []; let ok = 0;
+  try{
+    for(const f of elegidas){
+      pcEstado(`Guardando ${ok + fallos.length + 1} de ${elegidas.length}… OT ${f.ot}`);
+      try{ await pcGuardarOT(f); ok++; PC.nuevas = PC.nuevas.filter(x => x !== f); }
+      catch(e){ console.error(e); fallos.push(`OT ${f.ot}: ${e.message || e}`); }
+    }
+  }finally{ PC.ocupado = false; document.getElementById('pcGuardar').disabled = false; pcPintarCarpeta(); }
+  document.getElementById('pcLista').innerHTML = '';
+  document.getElementById('pcGuardar').hidden = true;
+  pcEstado(`Listo: ${ok} OT guardadas en el PC.` + (fallos.length ? `\nCon error (se pueden reintentar con «Buscar OT nuevas»):\n` + fallos.join('\n') : ''), fallos.length ? 'err' : '');
+}
+document.getElementById('btnPc').addEventListener('click', pcAbrir);
+document.getElementById('pcElegir').addEventListener('click', pcElegir);
+document.getElementById('pcBuscar').addEventListener('click', pcBuscar);
+document.getElementById('pcGuardar').addEventListener('click', pcGuardar);
+document.getElementById('pcCerrar').addEventListener('click', () => { if(!PC.ocupado) document.getElementById('pcOv').hidden = true; });
 
 /* ============================================================
    FOTOS — casilleros predefinidos + adicionales
@@ -2322,6 +2541,7 @@ function updateAdminButton(){
   document.getElementById('adminLabel').textContent = isAdmin ? 'Admin' : 'Admin';
   btn.classList.toggle('admin-active', isAdmin);
   btn.title = isAdmin ? 'Click para salir del modo administrador' : 'Click para entrar como administrador';
+  document.getElementById('btnPc').hidden = !(isAdmin && window.showDirectoryPicker);   // guardar en carpetas del PC: solo admin y solo Chrome/Edge de escritorio
 }
 async function toggleAdmin(){
   if(isAdmin && esAdminSesion()){
