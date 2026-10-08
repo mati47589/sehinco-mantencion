@@ -1321,11 +1321,17 @@ function resetForm(){
   renderAislacionTable();
 }
 
+// Todos los registros completos (solo para exportar a CSV). Se piden de a 100 para no sobrecargar el servidor.
 async function listAllRecords(){
   try{
-    const { data, error } = await api('/ingresos?join=full');
-    if(error) throw error;
-    return data.map(mapFromSupabase);
+    const todos = [];
+    for(let offset = 0; ; offset += 100){
+      const { data, error } = await api(`/ingresos?join=full&limit=100&offset=${offset}`);
+      if(error) throw error;
+      todos.push(...data.map(mapFromSupabase));
+      if(data.length < 100) break;
+    }
+    return todos;
   }catch(e){ console.error(e); return []; }
 }
 
@@ -1354,10 +1360,10 @@ function mapFromSupabase(row){
   };
 }
 
+// Actualiza el contador de la barra de abajo y el menú de clientes (una consulta corta, sin traer las OT)
 async function refreshCount(){
-  const recs = await listAllRecords();
-  document.getElementById('countBadge').textContent = recs.length;
-  return recs;
+  await cargarClientes(true);
+  return clientesInfo;
 }
 
 function fmtDate(d){ if(!d) return '—'; const parts = d.split('-'); return parts.length===3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d; }
@@ -1380,58 +1386,115 @@ function escRec(o){
   return o;
 }
 
-/* ---------- Lista de registros: filtro por cliente + orden ---------- */
-let listaCache = [];     // todos los registros ya descargados
-let listaVisible = [];   // los que se ven ahora (con filtro y búsqueda), en el orden mostrado
+/* ---------- Lista de registros: por páginas, con filtro por cliente ----------
+   La lista NO trae todas las OT: pide al servidor de a 50 tarjetas (con lo justo que muestra cada una) y el detalle
+   completo solo al abrir una OT. Así abrir Registros lee unas pocas filas de la base en vez de decenas de miles
+   (el plan gratis de la base permite solo 5 millones de lecturas por día). */
+const PAGINA_LISTA = 50;
+let listaVisible = [];       // tarjetas ya cargadas, en el orden mostrado (más recientes primero)
+let listaTotal = 0;          // cuántas OT cumplen el filtro actual (cargadas o no)
+let clientesInfo = null, clientesInfoHasta = 0;   // [{clave, nombre, n, crudos:[nombres tal como están guardados]}] + total
+let _solicitudLista = 0;     // para ignorar respuestas viejas si el usuario sigue escribiendo
+const _detalles = new Map(); // detalle completo de las últimas OT abiertas en el visor
 function normCliente(s){ return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim(); }
 function claveCliente(r){ return normCliente(r.cliente) || '__sin__'; }
 
+// Nombres de cliente y cuántas OT tiene cada uno (una consulta corta). Nombres casi iguales (mayúsculas, tildes,
+// espacios) se juntan en una sola entrada del menú; al elegirla se piden al servidor todas sus variantes.
+async function cargarClientes(forzar){
+  if(!forzar && clientesInfo && Date.now() < clientesInfoHasta) return clientesInfo;
+  const { data, error } = await api('/clientes');
+  if(error){ console.error(error); return clientesInfo; }
+  const grupos = new Map();
+  let total = 0;
+  for(const f of (data || [])){
+    const k = normCliente(f.cliente) || '__sin__';
+    const g = grupos.get(k) || { clave: k, nombre: '', mayor: 0, n: 0, crudos: [] };
+    g.n += f.n; total += f.n;
+    if(f.cliente && String(f.cliente).trim()){ g.crudos.push(f.cliente); if(f.n > g.mayor){ g.mayor = f.n; g.nombre = String(f.cliente).trim(); } }
+    grupos.set(k, g);
+  }
+  const lista = [...grupos.values()].map(g => ({ ...g, nombre: g.nombre || '(Sin cliente)' })).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  clientesInfo = Object.assign(lista, { total });
+  clientesInfoHasta = Date.now() + 60000;
+  document.getElementById('countBadge').textContent = total;
+  actualizarFiltroClientes();
+  return clientesInfo;
+}
 // Arma el menú de clientes con la cantidad de OT de cada uno (mantiene la selección actual)
 function actualizarFiltroClientes(){
   const sel = document.getElementById('clienteFiltro');
+  if(!clientesInfo) return;
   const previo = sel.value;
-  const grupos = new Map();
-  for(const r of listaCache){
-    const k = claveCliente(r);
-    const g = grupos.get(k) || { nombre: (r.cliente || '').trim() || '(Sin cliente)', n: 0 };
-    g.n++; grupos.set(k, g);
-  }
-  const items = [...grupos.entries()].sort((a, b) => a[1].nombre.localeCompare(b[1].nombre, 'es'));
-  sel.innerHTML = `<option value="">Todos los clientes (${listaCache.length})</option>` + items.map(([k, g]) => `<option value="${escH(k)}">${escH(g.nombre)} (${g.n})</option>`).join('');
-  sel.value = grupos.has(previo) ? previo : '';
+  sel.innerHTML = `<option value="">Todos los clientes (${clientesInfo.total})</option>` + clientesInfo.map(g => `<option value="${escH(g.clave)}">${escH(g.nombre)} (${g.n})</option>`).join('');
+  sel.value = clientesInfo.some(g => g.clave === previo) ? previo : '';
 }
 
-// usarCache=true: no vuelve a descargar todo (para buscar y filtrar al instante)
-async function renderList(usarCache){
-  const el = document.getElementById('recList');
-  if(usarCache !== true || !listaCache.length){
-    el.innerHTML = skeletonHTML(3);
-    listaCache = await listAllRecords();
-    document.getElementById('countBadge').textContent = listaCache.length;
-    actualizarFiltroClientes();
+function filaDeLista(r){
+  return { id: r.id, ot: r.ot, cliente: r.cliente, fecha: r.fecha, tecnico: r.tecnico, diagnostico: r.diagnostico,
+           aplicaElectrica: !!r.aplica_electrica, nFotos: r.n_fotos || 0, comps: (r.comps || '').split(',').map(s => s.trim()).filter(Boolean) };
+}
+function parametrosLista(offset){
+  const p = new URLSearchParams();
+  p.set('limit', PAGINA_LISTA); p.set('offset', offset);
+  const q = (document.getElementById('searchBox').value || '').trim();
+  if(q) p.set('q', q);
+  const clave = document.getElementById('clienteFiltro').value;
+  if(clave){
+    if(clave === '__sin__') p.set('sin_cliente', '1');
+    const g = clientesInfo && clientesInfo.find(x => x.clave === clave);
+    if(g) g.crudos.slice(0, 40).forEach(c => p.append('cliente', c));
   }
-  const q = (document.getElementById('searchBox').value || '').toLowerCase();
-  const cli = document.getElementById('clienteFiltro').value;
-  const filtered = listaCache
-    .filter(r => !cli || claveCliente(r) === cli)
-    .filter(r => !q || (r.ot||'').toLowerCase().includes(q) || (r.cliente||'').toLowerCase().includes(q) || (r.tecnico||'').toLowerCase().includes(q))
-    .sort((a, b) => (b.fecha || '').localeCompare(a.fecha || '') || (parseInt(b.ot, 10) || 0) - (parseInt(a.ot, 10) || 0));   // más recientes primero
-  listaVisible = filtered;
-  document.getElementById('listaResumen').textContent = filtered.length === listaCache.length ? `${filtered.length} OT` : `${filtered.length} de ${listaCache.length} OT`;
-  if(filtered.length === 0){
-    el.innerHTML = `<div class="empty-state">${icon('inbox')}<p>${listaCache.length ? 'Sin resultados para tu búsqueda.' : 'No hay registros guardados todavía.<br>Completa el formulario y presiona "Guardar".'}</p></div>`;
+  return p;
+}
+function hayFiltros(){ return !!((document.getElementById('searchBox').value || '').trim() || document.getElementById('clienteFiltro').value); }
+
+// renderList(): vuelve a pedir la primera página con los filtros actuales.
+// renderList(true): solo vuelve a dibujar lo ya cargado (sin consultar), p. ej. al entrar o salir del modo administrador.
+async function renderList(soloDibujar){
+  const el = document.getElementById('recList');
+  if(soloDibujar === true && listaVisible.length){ pintarLista(); return; }
+  const mia = ++_solicitudLista;
+  _detalles.clear();                                      // si algo cambió (se editó, se borró…) el visor vuelve a pedir el detalle
+  el.innerHTML = skeletonHTML(3);
+  await cargarClientes(false);
+  const { data, error } = await api('/lista?' + parametrosLista(0));
+  if(mia !== _solicitudLista) return;                     // llegó tarde: el usuario ya cambió el filtro
+  if(error || !data){
+    listaVisible = []; listaTotal = 0;
+    document.getElementById('listaResumen').textContent = '';
+    el.innerHTML = `<div class="empty-state">${icon('inbox')}<p><b>No se pudo cargar la lista.</b><br>${escH((error && error.message) || 'Error de conexión')}<br><button class="ver-chip accion" style="margin-top:12px;" onclick="renderList()">Reintentar</button></p></div>`;
     return;
   }
-  el.innerHTML = filtered.map(r => {
-    const statusClass = r.aplicaElectrica ? 'has-electrica' : (r.fotos && r.fotos.length ? 'has-fotos' : '');
-    const comps = r.componentes.map(c=>c.nombre).filter(Boolean);
+  listaVisible = data.filas.map(filaDeLista); listaTotal = data.total;
+  pintarLista();
+}
+async function cargarMasLista(){
+  const btn = document.getElementById('btnMasLista'); if(btn){ btn.disabled = true; btn.textContent = 'Cargando…'; }
+  const mia = _solicitudLista;
+  const { data, error } = await api('/lista?' + parametrosLista(listaVisible.length));
+  if(mia !== _solicitudLista) return;
+  if(error || !data){ showToast('No se pudieron cargar más OT: ' + ((error && error.message) || 'error'), 'error'); pintarLista(); return; }
+  listaVisible.push(...data.filas.map(filaDeLista)); listaTotal = data.total;
+  pintarLista();
+}
+function pintarLista(){
+  const el = document.getElementById('recList');
+  const total = clientesInfo ? clientesInfo.total : listaTotal;
+  document.getElementById('listaResumen').textContent = (hayFiltros() || listaTotal !== total) ? `${listaTotal} de ${total} OT` : `${listaTotal} OT`;
+  if(listaVisible.length === 0){
+    el.innerHTML = `<div class="empty-state">${icon('inbox')}<p>${hayFiltros() ? 'Sin resultados para tu búsqueda.' : 'No hay registros guardados todavía.<br>Completa el formulario y presiona "Guardar".'}</p></div>`;
+    return;
+  }
+  el.innerHTML = listaVisible.map(r => {
+    const statusClass = r.aplicaElectrica ? 'has-electrica' : (r.nFotos ? 'has-fotos' : '');
     return `<div class="rec-card ${statusClass}" onclick="verRecord('${escH(r.id)}')">
       <div class="rec-top"><span class="rec-ot">OT ${escH(r.ot) || '—'}</span><span class="rec-date">${fmtDate(r.fecha)}</span></div>
       <div class="rec-cliente">${escH(r.cliente) || 'Sin cliente'}</div>
       <div class="rec-meta">
-        ${comps.map(c=>`<span class="chip">${escH(c)}</span>`).join('') || '<span class="chip">Sin componentes</span>'}
+        ${r.comps.map(c => `<span class="chip">${escH(c)}</span>`).join('') || '<span class="chip">Sin componentes</span>'}
         ${r.tecnico ? `<span class="chip">👤 ${escH(r.tecnico)}</span>` : ''}
-        ${r.fotos && r.fotos.length ? `<span class="chip">📷 ${r.fotos.length}</span>` : ''}
+        ${r.nFotos ? `<span class="chip">📷 ${r.nFotos}</span>` : ''}
       </div>
       <div class="rec-actions">
         <button class="btn-ver" onclick="event.stopPropagation(); verRecord('${escH(r.id)}')">Ver</button>
@@ -1440,11 +1503,13 @@ async function renderList(usarCache){
         ${isAdmin ? `<button class="danger" onclick="event.stopPropagation(); deleteRecord('${escH(r.id)}')">${icon('trash')}</button>` : ''}
       </div>
     </div>`;
-  }).join('');
+  }).join('') + (listaVisible.length < listaTotal
+    ? `<div style="text-align:center;padding:14px 12px 24px;grid-column:1/-1;"><button class="ver-chip accion" id="btnMasLista" onclick="cargarMasLista()">Cargar más (${listaTotal - listaVisible.length} restantes)</button></div>`
+    : '');
 }
 let _tBuscar = null;
-document.getElementById('searchBox').addEventListener('input', () => { clearTimeout(_tBuscar); _tBuscar = setTimeout(() => renderList(true), 180); });
-document.getElementById('clienteFiltro').addEventListener('change', () => renderList(true));
+document.getElementById('searchBox').addEventListener('input', () => { clearTimeout(_tBuscar); _tBuscar = setTimeout(() => renderList(), 350); });   // busca en el servidor (no trae todo)
+document.getElementById('clienteFiltro').addEventListener('change', () => renderList());
 
 /* ---------- Visor de OT: ver todo el contenido en grande, sin imprimir ---------- */
 let verIndice = -1, verFotos = [], lbIndice = 0;
@@ -1461,15 +1526,37 @@ function verRecord(id){
   if(!abierto){ try{ history.pushState({ ver: true }, ''); }catch(e){} }   // así el botón "atrás" del tablet cierra el visor
   renderVer(true);
 }
-function renderVer(arriba){
-  const rec = listaVisible[verIndice];
-  if(!rec) return;
-  const r = escRec(rec);
-  document.getElementById('verOT').textContent = 'OT ' + (rec.ot || '—');
-  document.getElementById('verCliente').textContent = (rec.cliente || 'Sin cliente') + ' · ' + fmtDate(rec.fecha);
-  document.getElementById('verPos').textContent = `${verIndice + 1} / ${listaVisible.length}`;
+// Detalle completo de una OT (solo al abrirla). Se guardan las últimas en memoria para volver a verlas sin consultar.
+async function detalleDe(id){
+  if(_detalles.has(id)) return _detalles.get(id);
+  const { data, error } = await api('/ingresos/' + encodeURIComponent(id) + '?join=full');
+  if(error || !data){ console.error(error); return null; }
+  const rec = mapFromSupabase(data);
+  _detalles.set(id, rec);
+  if(_detalles.size > 20) _detalles.delete(_detalles.keys().next().value);
+  return rec;
+}
+let _solicitudVer = 0;
+async function renderVer(arriba){
+  const fila = listaVisible[verIndice];
+  if(!fila) return;
+  const mia = ++_solicitudVer;
+  // La cabecera sale al instante con lo que ya tiene la tarjeta; el detalle llega después
+  document.getElementById('verOT').textContent = 'OT ' + (fila.ot || '—');
+  document.getElementById('verCliente').textContent = (fila.cliente || 'Sin cliente') + ' · ' + fmtDate(fila.fecha);
+  document.getElementById('verPos').textContent = `${verIndice + 1} / ${listaTotal}`;
   document.getElementById('verPrev').disabled = verIndice <= 0;
-  document.getElementById('verNext').disabled = verIndice >= listaVisible.length - 1;
+  document.getElementById('verNext').disabled = verIndice >= listaTotal - 1;
+  document.getElementById('verChipElec').hidden = !fila.aplicaElectrica;
+  document.getElementById('verChipFotos').textContent = `Fotos (${fila.nFotos})`;
+  if(!_detalles.has(fila.id)) document.getElementById('verBody').innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--text-dim);">Cargando OT…</div>';
+  const rec = await detalleDe(fila.id);
+  if(mia !== _solicitudVer) return;                       // el usuario ya pasó a otra OT
+  if(!rec){
+    document.getElementById('verBody').innerHTML = '<div style="text-align:center;padding:60px 20px;color:var(--text-dim);">No se pudo cargar esta OT.<br><button class="ver-chip accion" style="margin-top:12px;" onclick="renderVer(true)">Reintentar</button></div>';
+    return;
+  }
+  const r = escRec(rec);
   verFotos = (rec.fotos || []).slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
   const fotosHtml = verFotos.length
     ? `<div class="ver-fotos" id="vs-fotos"><h3>FOTOGRAFÍAS (${verFotos.length}) — toca una para verla en grande</h3><div class="ver-fotos-grid">${
@@ -1486,8 +1573,9 @@ function renderVer(arriba){
   </div>`;
   if(arriba) document.getElementById('verBody').scrollTop = 0;
 }
-function verIr(delta){
+async function verIr(delta){
   const n = verIndice + delta;
+  if(n >= listaVisible.length && listaVisible.length < listaTotal) await cargarMasLista();   // al llegar a la última tarjeta cargada, trae las siguientes
   if(n < 0 || n >= listaVisible.length) return;
   verIndice = n; renderVer(true);
 }
@@ -1695,6 +1783,7 @@ async function deleteRecord(id){
     const { error } = await api('/ingresos/' + id, { method:'DELETE' });
     if(error) throw error;
     showToast('Registro eliminado');
+    await cargarClientes(true);      // actualiza el contador y el menú de clientes
     renderList();
   }catch(e){ console.error(e); showToast('Error al eliminar: ' + (e.message||''), 'error'); }
 }
@@ -1840,7 +1929,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-08 · hojas carta v3 (botón Imprimir)';
+const APP_VERSION = '2026-10-09 · lista liviana v4';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -2240,7 +2329,7 @@ async function toggleAdmin(){
       isAdmin = false;
       borrarTk(TK_ADM);
       updateAdminButton();
-      renderList();
+      renderList(true);       // solo cambian los botones: no hace falta volver a consultar
     }
     return;
   }
