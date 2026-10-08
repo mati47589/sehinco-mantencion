@@ -838,7 +838,7 @@
     <button class="ver-chip" id="verZoomMenos" aria-label="Letra más chica">A−</button>
     <button class="ver-chip" id="verZoomMas" aria-label="Letra más grande">A+</button>
     <button class="ver-chip" id="verEditar">Editar</button>
-    <button class="ver-chip accion" id="verImprimir">PDF</button>
+    <button class="ver-chip accion" id="verImprimir">Imprimir</button>
   </div>
   <div class="ver-body" id="verBody"></div>
 </div>
@@ -1436,7 +1436,7 @@ async function renderList(usarCache){
       <div class="rec-actions">
         <button class="btn-ver" onclick="event.stopPropagation(); verRecord('${escH(r.id)}')">Ver</button>
         <button onclick="event.stopPropagation(); editRecord('${escH(r.id)}')">${icon('edit')}Editar</button>
-        <button onclick="event.stopPropagation(); printRecord('${escH(r.id)}')">${icon('printer')}PDF</button>
+        <button onclick="event.stopPropagation(); printRecord('${escH(r.id)}')">${icon('printer')}Imprimir</button>
         ${isAdmin ? `<button class="danger" onclick="event.stopPropagation(); deleteRecord('${escH(r.id)}')">${icon('trash')}</button>` : ''}
       </div>
     </div>`;
@@ -1840,7 +1840,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-08 · hojas carta v2 (tablet)';
+const APP_VERSION = '2026-10-08 · hojas carta v3 (botón Imprimir)';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
