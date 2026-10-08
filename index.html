@@ -1870,6 +1870,9 @@ async function subirFotoASlot(file, etiqueta, orden){
     showToast(`La foto pesa demasiado (máx. ${CONFIG.MAX_FOTO_MB}MB)`, 'error');
     return;
   }
+  // OT nueva: para guardar la foto la app primero crea la OT, y para eso necesita O.T., Cliente y Fecha.
+  // Si falta alguno, se avisa cuál (y se marca el campo) en vez de un error genérico.
+  if(!window.editingId && !validarFormulario()) return;
   const ingresoId = await ensureIngresoId();
   if(!ingresoId){ showToast('No se pudo crear el registro', 'error'); return; }
   try{
@@ -1898,7 +1901,9 @@ async function subirFotoSlot(key, label, file){
   try{
     const slotIndex = getFotoSlots().findIndex(s => s.key === key);
     const orden = slotIndex >= 0 ? slotIndex + 1 : (currentFotos.length + 1);
-    const existing = currentFotos.find(f => f.etiqueta === label);
+    // La foto anterior de este casillero se busca por posición o por nombre (igual que al dibujarlo),
+    // para que al reemplazar no quede una foto duplicada si el nombre del equipo cambió.
+    const existing = currentFotos.find(f => f.orden === orden || f.etiqueta === label);
     if(existing){ await eliminarFotoSilencioso(existing.id, existing.storage_path); }
     await subirFotoASlot(file, label, orden);
   }finally{
