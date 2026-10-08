@@ -348,6 +348,7 @@
   .po-box p{ margin:3px 0 14px; font-size:13px; color:var(--text-dim); }
   .po-fila{ display:flex; align-items:center; gap:12px; padding:12px 4px; border-top:1px solid var(--border); text-transform:none !important; font-family:var(--sans) !important; font-size:16px !important; font-weight:600 !important; color:var(--text) !important; cursor:pointer; }
   .po-fila input{ width:22px; height:22px; accent-color:var(--accent); flex-shrink:0; }
+  .po-box .po-version{ margin:12px 0 0; font-size:11px; color:var(--text-faint); text-align:center; font-family:var(--mono); }
   .po-botones{ display:flex; gap:10px; margin-top:16px; }
   .po-botones button{ flex:1; height:48px; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px; font-weight:700; cursor:pointer; }
   .po-botones .primario{ background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
@@ -850,6 +851,7 @@
     <label class="po-fila" id="poFilaElectrica"><input type="checkbox" id="poElectrica"><span>Guía de mantención eléctrica</span></label>
     <label class="po-fila" id="poFilaFotos"><input type="checkbox" id="poFotos"><span id="poFotosTxt">Fotos</span></label>
     <div class="po-botones"><button id="poCancelar">Cancelar</button><button id="poImprimir" class="primario">Imprimir</button></div>
+    <p class="po-version" id="poVersion"></p>
   </div>
 </div>
 <div id="lightbox" class="lightbox" hidden>
@@ -1837,7 +1839,10 @@ async function printRecord(id){
   _recImprimir = escRec(mapFromSupabase(data));   // escapado: un texto con < > & no puede romper la hoja
   abrirOpcionesImpresion(_recImprimir);
 }
+// Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
+const APP_VERSION = '2026-10-08 · hojas carta';
 function abrirOpcionesImpresion(rec){
+  document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
   document.getElementById('poTitulo').textContent = `Imprimir OT ${rec.ot || ''}`;
   document.getElementById('poSub').textContent = rec.cliente || '';
