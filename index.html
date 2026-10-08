@@ -342,6 +342,16 @@
   .ver-fotos-grid img{ width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; border:1px solid #bbb; background:#eee; display:block; }
   .ver-fotos-grid figcaption{ font-size:11.5px; color:#222; margin-top:4px; text-align:center; line-height:1.3; }
   .lightbox{ position:fixed; inset:0; z-index:6000; background:rgba(0,0,0,.93); display:flex; align-items:center; justify-content:center; flex-direction:column; }
+  .po-overlay{ position:fixed; inset:0; z-index:5500; background:rgba(10,12,15,.55); display:flex; align-items:center; justify-content:center; padding:18px; }
+  .po-box{ background:var(--surface); border-radius:16px; padding:22px 22px 18px; max-width:380px; width:100%; box-shadow:0 8px 30px rgba(0,0,0,.3); }
+  .po-box h3{ margin:0; font-size:18px; }
+  .po-box p{ margin:3px 0 14px; font-size:13px; color:var(--text-dim); }
+  .po-fila{ display:flex; align-items:center; gap:12px; padding:12px 4px; border-top:1px solid var(--border); text-transform:none !important; font-family:var(--sans) !important; font-size:16px !important; font-weight:600 !important; color:var(--text) !important; cursor:pointer; }
+  .po-fila input{ width:22px; height:22px; accent-color:var(--accent); flex-shrink:0; }
+  .po-botones{ display:flex; gap:10px; margin-top:16px; }
+  .po-botones button{ flex:1; height:48px; border-radius:12px; border:1px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px; font-weight:700; cursor:pointer; }
+  .po-botones .primario{ background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+  .po-botones button:disabled{ opacity:.4; }
   .lightbox{ touch-action:none; user-select:none; -webkit-user-select:none; }
   .lightbox img{ max-width:96vw; max-height:82vh; object-fit:contain; will-change:transform; -webkit-user-drag:none; transform-origin:center center; }
   .lightbox img.anim{ transition:transform .18s ease-out; }
@@ -387,6 +397,7 @@
   #printArea{ display:none; }
   /*PRINT-START*/
   @media print{
+    @page{ size:letter; margin:8mm; }   /* papel CARTA (8,5 x 11 in) con márgenes de 8 mm: área útil = 755 x 995 px */
     html, body{ height:auto !important; min-height:0 !important; overflow:visible !important; margin:0 !important; padding:0 !important; background:#fff !important; }
     /* Todo lo que no es el documento se QUITA (display:none), no solo se oculta: lo oculto con
        visibility seguía ocupando espacio (lista de registros, formulario) y el navegador lo
@@ -398,6 +409,11 @@
   }
   /*PRINT-END*/
   .doc-page{ font-family:Arial, Helvetica, sans-serif; color:#000; padding:26px 30px; page-break-after:always; }
+  #printArea .doc-page{ padding:14px 20px; }   /* en papel el margen lo da la hoja (@page): así sobra más espacio útil */
+  /* Para medir las hojas "como saldrían en papel" sin mostrarlas en pantalla (ver ajustarHojasAlPapel) */
+  #printArea.midiendo{ display:block !important; position:fixed; left:-99999px; top:0; width:755px; visibility:hidden; }
+  /* El pie (dirección, fono, correo) nunca debe quedar solo en una hoja nueva */
+  .doc-pie{ break-inside:avoid; page-break-inside:avoid; break-before:avoid; page-break-before:avoid; }
   .doc-page:last-child{ page-break-after:auto; }
   .doc-header{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom:2px solid #000; padding-bottom:8px; margin-bottom:10px; }
   .doc-header .co{ font-size:11px; line-height:1.5; }
@@ -824,6 +840,17 @@
     <button class="ver-chip accion" id="verImprimir">PDF</button>
   </div>
   <div class="ver-body" id="verBody"></div>
+</div>
+<div id="printOpts" class="po-overlay" hidden>
+  <div class="po-box" role="dialog" aria-modal="true" aria-labelledby="poTitulo">
+    <h3 id="poTitulo">Imprimir</h3>
+    <p id="poSub"></p>
+    <label class="po-fila"><input type="checkbox" id="poDatos"><span>Datos de ingreso</span></label>
+    <label class="po-fila"><input type="checkbox" id="poInforme"><span>Informe de mantenimiento</span></label>
+    <label class="po-fila" id="poFilaElectrica"><input type="checkbox" id="poElectrica"><span>Guía de mantención eléctrica</span></label>
+    <label class="po-fila" id="poFilaFotos"><input type="checkbox" id="poFotos"><span id="poFotosTxt">Fotos</span></label>
+    <div class="po-botones"><button id="poCancelar">Cancelar</button><button id="poImprimir" class="primario">Imprimir</button></div>
+  </div>
 </div>
 <div id="lightbox" class="lightbox" hidden>
   <button class="lb-x" id="lbCerrar" aria-label="Cerrar foto">✕</button>
@@ -1584,7 +1611,12 @@ function lbSoltar(e){
 document.addEventListener('pointerup', lbSoltar);
 document.addEventListener('pointercancel', lbSoltar);
 window.addEventListener('resize', () => { if(!document.getElementById('lightbox').hidden){ lbLimitar(); lbAplicar(false); } });
+['poDatos', 'poInforme', 'poElectrica', 'poFotos'].forEach(id => document.getElementById(id).addEventListener('change', actualizarBotonImprimir));
+document.getElementById('poCancelar').addEventListener('click', cerrarOpcionesImpresion);
+document.getElementById('poImprimir').addEventListener('click', confirmarImpresion);
+document.getElementById('printOpts').addEventListener('click', e => { if(e.target.id === 'printOpts') cerrarOpcionesImpresion(); });
 document.addEventListener('keydown', e => {
+  if(!document.getElementById('printOpts').hidden){ if(e.key === 'Escape') cerrarOpcionesImpresion(); return; }
   if(!document.getElementById('lightbox').hidden){
     if(e.key === 'Escape') cerrarFotoVer(); else if(e.key === 'ArrowLeft') fotoVerIr(-1); else if(e.key === 'ArrowRight') fotoVerIr(1);
   }else if(!document.getElementById('verOverlay').hidden){
@@ -1679,7 +1711,7 @@ function docHeader(rec, subtitle){
   <div class="doc-title">${subtitle}</div>`;
 }
 function docFooter(){
-  return `<p style="font-size:9.5px;color:#555;border-top:1px solid #000;padding-top:4px;margin-top:16px;">TORO MAZOTTE 0130 - FONO/FAX:227760857 - EMAIL: ventas@sehinco.cl - ESTACION CENTRAL - SANTIAGO - CHILE</p>`;
+  return `<p class="doc-pie" style="font-size:9.5px;color:#555;border-top:1px solid #000;padding-top:4px;margin-top:16px;">TORO MAZOTTE 0130 - FONO/FAX:227760857 - EMAIL: ventas@sehinco.cl - ESTACION CENTRAL - SANTIAGO - CHILE</p>`;
 }
 function row(label, val){ return `<tr><td class="lbl">${label}</td><td>${val || ''}</td></tr>`; }
 
@@ -1797,22 +1829,65 @@ function pageElectrica(rec){
   </div>`;
 }
 
+// Al tocar "PDF" se carga la OT y se pregunta QUÉ imprimir. Las fotos vienen SIN marcar (por defecto no se imprimen).
+let _recImprimir = null;
 async function printRecord(id){
   const { data, error } = await api('/ingresos/' + id + '?join=full');
   if(error){ console.error(error); showToast('Error al cargar el registro', 'error'); return; }
-  const rec = escRec(mapFromSupabase(data));   // escapado: un texto con < > & no puede romper la hoja
-  let html = pageDatosIngreso(rec) + pageInforme(rec);
-  if(rec.aplicaElectrica) html += pageElectrica(rec);
-  const fotos = (rec.fotos || []).sort((a,b) => (a.orden||0)-(b.orden||0));
-  const fotosHtml = fotos.length ? fotos.map(f => {
-    const url = workerUrl(f.storage_path);
-    return `<div class="doc-photo"><img src="${url}" style="max-width:100%;max-height:300px;border:1px solid #999;"><br>${f.etiqueta||''}</div>`;
-  }).join('') : `<p style="font-size:11.5px;color:#555;">Sin fotos cargadas para esta OT.</p>`;
-  html += `<div class="doc-page" style="page-break-after:auto;">
-    ${docHeader(rec,'ANEXO 1 — FOTOGRAFIAS')}
-    ${fotosHtml}
-    ${docFooter()}
-  </div>`;
+  _recImprimir = escRec(mapFromSupabase(data));   // escapado: un texto con < > & no puede romper la hoja
+  abrirOpcionesImpresion(_recImprimir);
+}
+function abrirOpcionesImpresion(rec){
+  const nFotos = (rec.fotos || []).length;
+  document.getElementById('poTitulo').textContent = `Imprimir OT ${rec.ot || ''}`;
+  document.getElementById('poSub').textContent = rec.cliente || '';
+  document.getElementById('poDatos').checked = true;
+  document.getElementById('poInforme').checked = true;
+  document.getElementById('poElectrica').checked = true;
+  document.getElementById('poFilaElectrica').hidden = !rec.aplicaElectrica;
+  document.getElementById('poFotos').checked = false;                    // por defecto, sin fotos
+  document.getElementById('poFilaFotos').hidden = nFotos === 0;
+  document.getElementById('poFotosTxt').textContent = `Fotos (${nFotos})`;
+  actualizarBotonImprimir();
+  document.getElementById('printOpts').hidden = false;
+}
+function opcionesImpresionLeidas(){
+  return {
+    datos: document.getElementById('poDatos').checked,
+    informe: document.getElementById('poInforme').checked,
+    electrica: document.getElementById('poElectrica').checked && !document.getElementById('poFilaElectrica').hidden,
+    fotos: document.getElementById('poFotos').checked && !document.getElementById('poFilaFotos').hidden
+  };
+}
+function actualizarBotonImprimir(){
+  const o = opcionesImpresionLeidas();
+  document.getElementById('poImprimir').disabled = !(o.datos || o.informe || o.electrica || o.fotos);
+}
+function cerrarOpcionesImpresion(){ document.getElementById('printOpts').hidden = true; }
+async function confirmarImpresion(){
+  const op = opcionesImpresionLeidas();
+  cerrarOpcionesImpresion();
+  if(_recImprimir) await imprimirOT(_recImprimir, op);
+}
+async function imprimirOT(rec, op){
+  op = op || { datos: true, informe: true, electrica: true, fotos: false };
+  let html = '';
+  if(op.datos) html += pageDatosIngreso(rec);
+  if(op.informe) html += pageInforme(rec);
+  if(op.electrica && rec.aplicaElectrica) html += pageElectrica(rec);
+  if(op.fotos){
+    const fotos = (rec.fotos || []).slice().sort((a,b) => (a.orden||0)-(b.orden||0));
+    const fotosHtml = fotos.length ? fotos.map(f => {
+      const url = workerUrl(f.storage_path);
+      return `<div class="doc-photo"><img src="${url}" style="max-width:100%;max-height:300px;border:1px solid #999;"><br>${f.etiqueta||''}</div>`;
+    }).join('') : `<p style="font-size:11.5px;color:#555;">Sin fotos cargadas para esta OT.</p>`;
+    html += `<div class="doc-page flujo">
+      ${docHeader(rec,'ANEXO 1 — FOTOGRAFIAS')}
+      ${fotosHtml}
+      ${docFooter()}
+    </div>`;
+  }
+  if(!html){ showToast('No hay nada seleccionado para imprimir', 'error'); return; }
   const area = document.getElementById('printArea');
   area.innerHTML = html;
   // Espera a que terminen de cargar las fotos (hasta 20 s); si se imprime antes, salen en blanco.
@@ -1824,7 +1899,33 @@ async function printRecord(id){
       new Promise(r => setTimeout(r, 20000))
     ]);
   }
+  await ajustarHojasAlPapel(area);
   window.print();
+}
+
+/* Cada hoja del documento (ingreso, informe, eléctrica) debe caber en UNA página: si se pasa aunque sea un poco,
+   el pie (dirección, fono, correo) se va solo a una hoja nueva. Se mide como saldría en papel y, si hace falta,
+   se achica la hoja lo justo (nunca bajo ZOOM_MIN_HOJA para que se siga leyendo bien). Si aun así no cabe, se deja
+   fluir en 2 hojas, pero con el pie pegado al contenido. */
+const ALTO_HOJA_PX = 975;      // hoja CARTA con márgenes de 8 mm: 995 px útiles, menos ~20 px de holgura
+const ZOOM_MIN_HOJA = 0.78;
+async function ajustarHojasAlPapel(area){
+  area.classList.add('midiendo');
+  try{
+    for(const pg of area.querySelectorAll('.doc-page:not(.flujo)')){
+      pg.style.zoom = '';
+      let h = pg.getBoundingClientRect().height;
+      if(h <= ALTO_HOJA_PX) continue;
+      let z = 1;
+      for(let i = 0; i < 4 && h > ALTO_HOJA_PX; i++){
+        z = Math.max(ZOOM_MIN_HOJA, z * ALTO_HOJA_PX / h * 0.99);
+        pg.style.zoom = z.toFixed(3);
+        h = pg.getBoundingClientRect().height;
+        if(z === ZOOM_MIN_HOJA) break;
+      }
+      if(h > ALTO_HOJA_PX){ pg.style.zoom = ''; pg.classList.add('flujo'); }   // demasiado larga: mejor 2 hojas legibles que 1 ilegible
+    }
+  }finally{ area.classList.remove('midiendo'); }
 }
 
 /* ============================================================
