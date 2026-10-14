@@ -2155,6 +2155,18 @@ async function pcEscanear(raiz){
   }
   return { numeros, clientes, carpetas };
 }
+// ¿La OT de la app tiene realmente un informe cargado? Las OT importadas solo con fotos traen únicamente cliente, fecha y equipo:
+// a esas no se les crea un informe vacío. Cuenta como informe: trabajo realizado, conclusión, sugerencia, medida correctiva,
+// observaciones, repuestos o datos técnicos de algún componente.
+async function pcOtTieneInforme(id){
+  const { data, error } = await api('/ingresos/' + id + '?join=full');
+  if(error || !data) return false;
+  const t = (s) => String(s == null ? '' : s).trim();
+  if([data.descripcion_trabajo, data.conclusion, data.sugerencia, data.medida_correctiva, data.obs_general].some(t)) return true;
+  if((data.repuestos || []).length) return true;
+  const claves = ['marca', 'modelo', 'serie', 'potencia', 'corriente', 'voltaje', 'rpm', 'rodamiento', 'sello_mecanico', 'impulsor', 'observacion'];
+  return (data.componentes || []).some(c => claves.some(k => t(c[k])));
+}
 // ¿La carpeta de la OT ya tiene algún informe PDF? (los de la propia app, "(tablet)", también cuentan)
 async function pcTienePdf(dir){
   for await (const [n, h] of dir.entries()){ if(h.kind === 'file' && /\.pdf$/i.test(n) && !n.startsWith('~$')) return true; }
@@ -2192,12 +2204,12 @@ async function pcBuscar(){
       if(yaGuardadas === 1) candidatasSinPdf.push({ fila: rows[0], carpeta: carpetas.get(ot)[0] });
     });
     // OT cuya carpeta ya existe (p. ej. solo con fotos) pero sin ningún informe PDF: se ofrece agregar solo el PDF
-    pcEstado(`Revisando ${candidatasSinPdf.length} carpetas de OT…`);
+    pcEstado(`Revisando ${candidatasSinPdf.length} carpetas de OT que ya existen…`);
     let sig = 0;
     await Promise.all(Array.from({ length: 6 }, async () => {
       while(sig < candidatasSinPdf.length){
         const c = candidatasSinPdf[sig++];
-        try{ if(!await pcTienePdf(c.carpeta.handle)) PC.nuevas.push({ ...c.fila, completar: true, carpetaHandle: c.carpeta.handle, carpetaNombre: c.carpeta.nombre, carpetaCliente: c.carpeta.cliente }); }catch(e){ console.warn('no se pudo revisar', c.carpeta.nombre, e); }
+        try{ if(!await pcTienePdf(c.carpeta.handle) && await pcOtTieneInforme(c.fila.id)) PC.nuevas.push({ ...c.fila, completar: true, carpetaHandle: c.carpeta.handle, carpetaNombre: c.carpeta.nombre, carpetaCliente: c.carpeta.cliente }); }catch(e){ console.warn('no se pudo revisar', c.carpeta.nombre, e); }
       }
     }));
     PC.nuevas.sort((a, b) => String(b.ot).localeCompare(String(a.ot), 'es', { numeric: true }));
