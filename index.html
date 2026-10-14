@@ -2119,18 +2119,24 @@ async function pcPermiso(){
 }
 // Qué hay en la carpeta del año: números de OT ya guardados y carpetas de cliente
 async function pcEscanear(raiz){
-  const numeros = new Set(), clientes = new Map();
+  const numeros = new Map(), clientes = new Map(), carpetas = new Map();   // numeros: nº de OT -> cuántas carpetas de esa OT hay (pueden repetirse en el año)
+  const suma = (n, nombre, handle, cliente) => { numeros.set(n, (numeros.get(n) || 0) + 1); if(!carpetas.has(n)) carpetas.set(n, []); carpetas.get(n).push({ nombre, handle, cliente }); };
   for await (const [n1, h1] of raiz.entries()){
     if(h1.kind !== 'directory') continue;
     const m1 = n1.match(PC_RE_OT);
-    if(m1){ numeros.add(m1[1] || m1[2]); continue; }
+    if(m1){ suma(m1[1] || m1[2], n1, h1, ''); continue; }
     clientes.set(n1, { nombre: n1, handle: h1, clave: pcClave(n1) });
     for await (const [n2, h2] of h1.entries()){
       if(h2.kind !== 'directory') continue;
-      const m2 = n2.match(PC_RE_OT); if(m2) numeros.add(m2[1] || m2[2]);
+      const m2 = n2.match(PC_RE_OT); if(m2) suma(m2[1] || m2[2], n2, h2, n1);
     }
   }
-  return { numeros, clientes };
+  return { numeros, clientes, carpetas };
+}
+// ¿La carpeta de la OT ya tiene algún informe PDF? (los de la propia app, "(tablet)", también cuentan)
+async function pcTienePdf(dir){
+  for await (const [n, h] of dir.entries()){ if(h.kind === 'file' && /\.pdf$/i.test(n) && !n.startsWith('~$')) return true; }
+  return false;
 }
 // Carpeta de cliente que corresponde a un nombre: igual (sin tildes/puntos/S.A.) o, si hay una sola, que lo contenga
 function pcCarpetaDeCliente(nombreCliente){
@@ -2146,17 +2152,37 @@ async function pcBuscar(){
   if(!await pcPermiso()) return;
   PC.ocupado = true; pcPintarCarpeta(); pcEstado('Revisando la carpeta y la lista de OT…');
   try{
-    const { numeros, clientes } = await pcEscanear(PC.raiz);
+    const { numeros, clientes, carpetas } = await pcEscanear(PC.raiz);
     PC.clientes = clientes;
     const { data, error } = await api('/resumen');
     if(error) throw new Error(error.message || 'no se pudo consultar la lista de OT');
     const anio = (PC.raiz.name.match(/(20\d\d)/) || [])[1];
+    // Registros de la app por número de OT (solo del año de la carpeta y con fecha), del más antiguo al más nuevo.
+    // Si el mismo número aparece más de una vez en el año (p. ej. se reutilizó en el segundo semestre), cada carpeta
+    // ya guardada cubre a los registros más antiguos y solo se ofrecen los que sobran: nunca se pisa una carpeta existente.
     const porOt = new Map();
-    (data || []).forEach(r => { if(!r.fecha || (anio && r.fecha.slice(0, 4) !== anio) || numeros.has(String(r.ot))) return; const p = porOt.get(r.ot); if(!p || (r.created_at || '') > (p.created_at || '')) porOt.set(r.ot, r); });
-    PC.nuevas = [...porOt.values()].sort((a, b) => String(b.ot).localeCompare(String(a.ot), 'es', { numeric: true }));
+    (data || []).forEach(r => { if(!r.fecha || (anio && r.fecha.slice(0, 4) !== anio)) return; const k = String(r.ot); if(!porOt.has(k)) porOt.set(k, []); porOt.get(k).push(r); });
+    PC.nuevas = []; const candidatasSinPdf = [];
+    porOt.forEach((rows, ot) => {
+      rows.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')) || String(a.id).localeCompare(String(b.id)));
+      const yaGuardadas = numeros.get(ot) || 0;
+      rows.slice(yaGuardadas).forEach(r => PC.nuevas.push({ ...r, repetida: yaGuardadas > 0 }));
+      if(yaGuardadas === 1) candidatasSinPdf.push({ fila: rows[0], carpeta: carpetas.get(ot)[0] });
+    });
+    // OT cuya carpeta ya existe (p. ej. solo con fotos) pero sin ningún informe PDF: se ofrece agregar solo el PDF
+    pcEstado(`Revisando ${candidatasSinPdf.length} carpetas de OT…`);
+    let sig = 0;
+    await Promise.all(Array.from({ length: 6 }, async () => {
+      while(sig < candidatasSinPdf.length){
+        const c = candidatasSinPdf[sig++];
+        try{ if(!await pcTienePdf(c.carpeta.handle)) PC.nuevas.push({ ...c.fila, completar: true, carpetaHandle: c.carpeta.handle, carpetaNombre: c.carpeta.nombre, carpetaCliente: c.carpeta.cliente }); }catch(e){ console.warn('no se pudo revisar', c.carpeta.nombre, e); }
+      }
+    }));
+    PC.nuevas.sort((a, b) => String(b.ot).localeCompare(String(a.ot), 'es', { numeric: true }));
     document.getElementById('pcLista').innerHTML = PC.nuevas.map((r, i) => {
       const cli = (r.cliente || '').trim() || 'SIN CLIENTE', c = pcCarpetaDeCliente(cli);
-      return `<label class="pc-fila"><input type="checkbox" class="pcChk" data-i="${i}" checked><span><b>OT ${escH(r.ot)}</b> · ${escH(cli)} · ${escH(r.fecha || '')}<small>Va a: ${c ? escH(c.nombre) : escH(pcNombreSeguro(cli.toUpperCase())) + ' (carpeta nueva)'} / OT ${escH(r.ot)}</small></span></label>`;
+      if(r.completar) return `<label class="pc-fila"><input type="checkbox" class="pcChk" data-i="${i}" checked><span><b>OT ${escH(r.ot)}</b> · ${escH(cli)} · ${escH(r.fecha || '')}<small>Ya tiene carpeta («${escH((r.carpetaCliente ? r.carpetaCliente + ' / ' : '') + r.carpetaNombre)}») pero sin informe PDF: se agrega solo el informe «(tablet)»; no se toca nada más</small></span></label>`;
+      return `<label class="pc-fila"><input type="checkbox" class="pcChk" data-i="${i}" checked><span><b>OT ${escH(r.ot)}</b> · ${escH(cli)} · ${escH(r.fecha || '')}<small>Va a: ${c ? escH(c.nombre) : escH(pcNombreSeguro(cli.toUpperCase())) + ' (carpeta nueva)'} / OT ${escH(r.ot)}${r.repetida ? ' — ¡ese número ya tiene carpeta en el año! Se guarda aparte («OT ' + escH(r.ot) + ' (2)») y no se toca la existente' : ''}</small></span></label>`;
     }).join('');
     document.getElementById('pcGuardar').hidden = !PC.nuevas.length;
     document.getElementById('pcGuardar').textContent = `Guardar ${PC.nuevas.length} OT`;
@@ -2217,6 +2243,11 @@ async function pcEscribir(dir, nombre, blob){
 async function pcGuardarOT(fila){
   const { data, error } = await api('/ingresos/' + fila.id + '?join=full');
   if(error || !data) throw new Error((error && error.message) || 'no se pudo leer la OT');
+  if(fila.completar){   // la carpeta ya existe: solo se agrega el informe, sin tocar fotos ni otros archivos
+    const pdf = await pcGenerarPdf(escRec(mapFromSupabase(data)));
+    await pcEscribir(fila.carpetaHandle, `Informe OT ${pcNombreSeguro(data.ot)} (tablet).pdf`, pdf);
+    return { carpeta: fila.carpetaNombre, fotos: 0 };
+  }
   const nombreCli = (data.cliente || '').trim() || 'SIN CLIENTE';
   let cli = pcCarpetaDeCliente(nombreCli);
   if(!cli){
@@ -2224,7 +2255,11 @@ async function pcGuardarOT(fila){
     cli = { nombre, handle: await PC.raiz.getDirectoryHandle(nombre, { create: true }), clave: pcClave(nombre) };
     PC.clientes.set(nombre, cli);
   }
-  const nombreOT = 'OT ' + pcNombreSeguro(data.ot);
+  // Nunca se escribe sobre una carpeta que ya existe: si hay una con ese nombre, esta va como "OT n (2)", "(3)"…
+  const existe = async (n) => { try{ await cli.handle.getDirectoryHandle(n); return true; }catch(e){ return false; } };
+  const base = 'OT ' + pcNombreSeguro(data.ot);
+  let nombreOT = fila.repetida ? `${base} (2)` : base;   // número repetido en el año: ya hay otra carpeta de esa OT (con cualquier nombre), esta va aparte
+  for(let k = 3; await existe(nombreOT) && k < 50; k++) nombreOT = `${base} (${k})`;
   const otDir = await cli.handle.getDirectoryHandle(nombreOT, { create: true });
   try{
     const pdf = await pcGenerarPdf(escRec(mapFromSupabase(data)));
