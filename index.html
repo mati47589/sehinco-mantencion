@@ -883,6 +883,15 @@
     <p id="pcEstado"></p>
   </div>
 </div>
+<div id="fotOtOv" class="po-overlay pc-overlay" hidden>
+  <div class="po-box" role="dialog" aria-modal="true" aria-labelledby="fotOtTitulo">
+    <h3 id="fotOtTitulo">Elige la foto</h3>
+    <p>Toca la foto que corresponde: pasa a ese casillero (no se vuelve a subir). Si el casillero ya tenía una foto, esa queda como foto adicional.</p>
+    <div id="fotOtLista"></div>
+    <div class="po-botones"><button id="fotOtCerrar">Cancelar</button></div>
+    <p id="fotOtEstado" style="font-family:var(--mono);font-size:12.5px;"></p>
+  </div>
+</div>
 <div id="fpcOv" class="po-overlay pc-overlay" hidden>
   <div class="po-box" role="dialog" aria-modal="true" aria-labelledby="fpcTitulo">
     <h3 id="fpcTitulo">Fotos de la carpeta de la OT en el PC</h3>
@@ -928,6 +937,7 @@
   <div class="foto-choice-title" id="fotoChoiceTitle">Foto</div>
   <button class="foto-choice-btn" onclick="dispararCamara()"><span id="fcIconCam"></span>Tomar foto</button>
   <button class="foto-choice-btn" onclick="dispararGaleria()"><span id="fcIconGal"></span>Elegir de galería</button>
+  <button class="foto-choice-btn" id="fotoChoiceOt" hidden onclick="abrirFotosOT()"><span></span>Elegir de las fotos ya subidas a esta OT</button>
   <button class="foto-choice-btn" id="fotoChoicePc" hidden onclick="fpcDesdeCasillero()"><span></span>Elegir de la carpeta de esta OT en el PC</button>
   <button class="foto-choice-btn cancel" onclick="cerrarFotoChoice()">Cancelar</button>
 </div>
@@ -1970,7 +1980,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-14 · fotos del PC v1';
+const APP_VERSION = '2026-10-14 · fotos del PC v2';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -2598,6 +2608,59 @@ async function subirFotoASlot(file, etiqueta, orden){
   }
 }
 
+/* ---------- Elegir, para un casillero, una de las fotos que ya están subidas a la misma OT ----------
+   Típico: una OT importada desde la carpeta cuyas fotos llegaron como "adicionales" (IMG_8290…). La foto no se vuelve a
+   subir: se registra con el número y nombre del casillero y se quita su registro anterior (el archivo queda igual). */
+function fotosAdicionalesDeOT(){
+  const slots = getFotoSlots();
+  return (currentFotos || []).filter(f => !slots.some((s, i) => f.orden === i + 1 || f.etiqueta === s.label)).sort((a, b) => (a.orden || 0) - (b.orden || 0));
+}
+let _fotOtDestino = null;
+function abrirFotosOT(){
+  const key = _fotoChoiceKey, label = _fotoChoiceLabel;
+  cerrarFotoChoice();
+  const extras = fotosAdicionalesDeOT();
+  if(key === '__extra__' || !extras.length){ showToast('Esta OT no tiene fotos adicionales para elegir', 'error'); return; }
+  _fotOtDestino = { key, label };
+  document.getElementById('fotOtTitulo').textContent = `Elige la foto para «${label}»`;
+  document.getElementById('fotOtEstado').textContent = `${extras.length} foto(s) adicionales en esta OT.`;
+  document.getElementById('fotOtLista').innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px;">${extras.map(f => `
+    <button type="button" class="fpc-celda" data-id="${escH(f.id)}" title="${escH(f.etiqueta || '')}"><img src="${workerUrl(f.storage_path)}" alt="" loading="lazy"><span>${escH(f.etiqueta) || 'Sin etiqueta'}</span></button>`).join('')}</div>`;
+  document.querySelectorAll('#fotOtLista .fpc-celda').forEach(b => b.addEventListener('click', () => asignarFotoACasillero(b.dataset.id)));
+  document.getElementById('fotOtOv').hidden = false;
+}
+async function asignarFotoACasillero(fotoId){
+  const dest = _fotOtDestino, f = (currentFotos || []).find(x => x.id === fotoId);
+  if(!dest || !f || !window.editingId) return;
+  const slots = getFotoSlots(), orden = slots.findIndex(s => s.key === dest.key) + 1;
+  if(orden < 1) return;
+  const est = document.getElementById('fotOtEstado'); est.textContent = 'Moviendo la foto…';
+  const registrar = (cuerpo) => api('/fotos', { method: 'POST', body: Object.assign({ ingreso_id: window.editingId }, cuerpo) });
+  try{
+    // 1) Si el casillero ya tenía una foto, pasa a ser adicional (se registra primero y recién después se quita el registro viejo)
+    const previa = currentFotos.find(x => x.id !== f.id && (x.orden === orden || x.etiqueta === dest.label));
+    if(previa){
+      const nuevoOrden = Math.max(slots.length + 1, ...currentFotos.map(x => (x.orden || 0) + 1));
+      const choca = slots.some(s => s.label === previa.etiqueta);
+      const r1 = await registrar({ storage_path: previa.storage_path, etiqueta: choca ? previa.etiqueta + ' (anterior)' : (previa.etiqueta || 'Sin etiqueta'), orden: nuevoOrden });
+      if(r1.error) throw r1.error;
+      const d1 = await api('/fotos/' + previa.id, { method: 'DELETE' }); if(d1.error) throw d1.error;
+    }
+    // 2) La foto elegida toma el casillero
+    const r2 = await registrar({ storage_path: f.storage_path, etiqueta: dest.label, orden });
+    if(r2.error) throw r2.error;
+    const d2 = await api('/fotos/' + f.id, { method: 'DELETE' }); if(d2.error) throw d2.error;
+    document.getElementById('fotOtOv').hidden = true;
+    await refreshFotos(window.editingId);
+    showToast('Foto movida a «' + dest.label + '» ✓');
+  }catch(e){
+    console.error(e);
+    est.textContent = 'No se pudo mover la foto: ' + (e.message || 'revisa tu conexión');
+    await refreshFotos(window.editingId);
+  }
+}
+document.getElementById('fotOtCerrar').addEventListener('click', () => { document.getElementById('fotOtOv').hidden = true; });
+
 async function subirFotoSlot(key, label, file){
   if(!file) return;
   const wrap = document.getElementById('slotwrap_' + key);
@@ -2621,6 +2684,7 @@ function abrirFotoChoice(key, label){
   _fotoChoiceKey = key;
   _fotoChoiceLabel = label;
   document.getElementById('fotoChoiceTitle').textContent = label;
+  document.getElementById('fotoChoiceOt').hidden = key === '__extra__' || !fotosAdicionalesDeOT().length;   // solo si la OT tiene fotos sueltas para elegir
   document.getElementById('fotoChoiceBackdrop').classList.add('open');
   document.getElementById('fotoChoiceSheet').classList.add('open');
 }
