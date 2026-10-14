@@ -420,6 +420,11 @@
   .pc-fila{ display:flex; gap:10px; align-items:flex-start; padding:9px 2px; border-top:1px solid var(--border); font-size:14px; }
   .pc-fila input{ width:20px; height:20px; accent-color:var(--accent); flex-shrink:0; margin-top:2px; }
   .pc-fila small{ display:block; color:var(--text-dim); font-size:12px; }
+  .fpc-fila{ display:flex; gap:10px; align-items:center; padding:8px 2px; border-top:1px solid var(--border); font-size:13px; flex-wrap:wrap; }
+  .fpc-fila input[type=checkbox]{ width:20px; height:20px; accent-color:var(--accent); flex-shrink:0; }
+  .fpc-fila img{ width:64px; height:48px; object-fit:cover; border:1px solid var(--border-strong); border-radius:6px; background:#eee; }
+  .fpc-fila .fpc-datos{ flex:1; min-width:180px; }
+  .fpc-fila select, .fpc-fila input[type=text]{ width:100%; font-size:13px; padding:5px 6px; margin-top:4px; }
   #pcEstado{ white-space:pre-wrap; font-family:var(--mono); font-size:12.5px; }
   /* El pie (dirección, fono, correo) nunca debe quedar solo en una hoja nueva */
   .doc-pie{ break-inside:avoid; page-break-inside:avoid; break-before:avoid; page-break-before:avoid; }
@@ -709,6 +714,7 @@
         <button class="btn-mini" onclick="abrirFotoChoiceExtra()"><span class="mini-icon"></span>Subir</button>
       </div>
       <div class="hint">Toca un casillero para elegir cámara o galería. Si aún no has guardado el registro, se crea automáticamente al subir la primera foto.</div>
+      <div class="add-item" style="margin-top:10px;"><button class="btn-mini" id="btnFotosPc" hidden>Traer fotos de la carpeta de esta OT en el PC…</button></div>
     </div>
   </section>
 
@@ -872,6 +878,16 @@
     <div id="pcLista" style="margin-top:12px;"></div>
     <div class="po-botones"><button id="pcCerrar">Cerrar</button><button id="pcGuardar" class="primario" hidden>Guardar</button></div>
     <p id="pcEstado"></p>
+  </div>
+</div>
+<div id="fpcOv" class="po-overlay pc-overlay" hidden>
+  <div class="po-box" role="dialog" aria-modal="true" aria-labelledby="fpcTitulo">
+    <h3 id="fpcTitulo">Fotos de la carpeta de la OT en el PC</h3>
+    <p id="fpcInfo"></p>
+    <div class="po-botones" style="margin-top:0;"><button id="fpcElegir">Elegir / cambiar carpeta del año…</button></div>
+    <div id="fpcLista" style="margin-top:12px;"></div>
+    <div class="po-botones"><button id="fpcCerrar">Cerrar</button><button id="fpcAgregar" class="primario" hidden>Agregar a la OT</button></div>
+    <p id="fpcEstado" style="white-space:pre-wrap;font-family:var(--mono);font-size:12.5px;"></p>
   </div>
 </div>
 <div id="lightbox" class="lightbox" hidden>
@@ -1950,7 +1966,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-09 · guardar en PC v1';
+const APP_VERSION = '2026-10-14 · fotos del PC v1';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -2309,6 +2325,106 @@ document.getElementById('pcGuardar').addEventListener('click', pcGuardar);
 document.getElementById('pcCerrar').addEventListener('click', () => { if(!PC.ocupado) document.getElementById('pcOv').hidden = true; });
 
 /* ============================================================
+   TRAER FOTOS DE LA CARPETA DE LA OT EN EL PC (para completar la OT en la app)
+   En el formulario, busca la carpeta de esta OT dentro de la carpeta del año (la misma que usa "Guardar en mi PC"),
+   muestra sus fotos y sube a la OT las que se marquen. Las numeradas 1 a 12 ("3. CAJA ANTES.jpg") van al casillero de
+   ese número; las demás, como fotos adicionales con su nombre de etiqueta. Las que ya están en la app salen sin marcar.
+   ============================================================ */
+const FPC = { items: [], ocupado: false };
+function fpcEstado(txt, tipo){ const e = document.getElementById('fpcEstado'); e.textContent = txt || ''; e.style.color = tipo === 'err' ? 'var(--danger, #c0392b)' : ''; }
+function fpcNorm(s){ return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim(); }
+async function fpcAbrir(){
+  if(!(document.getElementById('f_ot').value || '').trim()){ showToast('Escribe primero el número de OT', 'error'); return; }
+  document.getElementById('fpcOv').hidden = false;
+  document.getElementById('fpcLista').innerHTML = ''; document.getElementById('fpcAgregar').hidden = true; fpcEstado('');
+  if(!PC.raiz){ const h = await pcKvGet('carpetaPc'); if(h) PC.raiz = h; }
+  if(!PC.raiz){ document.getElementById('fpcInfo').textContent = 'Primero elige la carpeta del año (por ejemplo «INFORMES TECNICOS Y FOTOS 2026»).'; return; }
+  await fpcBuscar();
+}
+async function fpcElegir(){
+  try{
+    const h = await window.showDirectoryPicker({ id: 'sehinco-pc', mode: 'readwrite' });
+    PC.raiz = h; await pcKvSet('carpetaPc', h); await fpcBuscar();
+  }catch(e){ if(e.name !== 'AbortError') fpcEstado('No se pudo abrir la carpeta: ' + e.message, 'err'); }
+}
+async function fpcImagenes(dir, prefijo, salida, nivel){
+  for await (const [n, h] of dir.entries()){
+    if(h.kind === 'directory'){ if(nivel < 2 && !/^redimensionad/i.test(n)) await fpcImagenes(h, prefijo + n + '/', salida, nivel + 1); }
+    else if(/\.(jpe?g|png|webp)$/i.test(n) && !n.startsWith('~$') && salida.length < 300) salida.push({ nombre: n, ruta: prefijo + n, handle: h });
+  }
+}
+async function fpcBuscar(){
+  const ot = document.getElementById('f_ot').value.trim();
+  document.getElementById('fpcInfo').textContent = `OT ${ot} — carpeta del año: «${PC.raiz.name}»`;
+  document.getElementById('fpcLista').innerHTML = ''; document.getElementById('fpcAgregar').hidden = true;
+  fpcEstado('Buscando la carpeta de la OT…');
+  try{
+    if(PC.raiz.requestPermission){ const p = await PC.raiz.requestPermission({ mode: 'read' }); if(p !== 'granted'){ fpcEstado('Sin permiso para leer la carpeta. Pulsa «Elegir / cambiar carpeta» y acepta.', 'err'); return; } }
+    const { carpetas } = await pcEscanear(PC.raiz);
+    const sinCeros = (s) => String(s).replace(/^0+/, '');
+    const dirs = [...carpetas.entries()].filter(([n]) => sinCeros(n) === sinCeros(ot)).flatMap(([, v]) => v);
+    if(!dirs.length){ fpcEstado(`No hay una carpeta de la OT ${ot} en «${PC.raiz.name}». Revisa el número de OT o la carpeta del año.`, 'err'); return; }
+    const imgs = [];
+    for(const d of dirs) await fpcImagenes(d.handle, dirs.length > 1 ? d.nombre + '/' : '', imgs, 0);
+    if(!imgs.length){ fpcEstado(`La carpeta «${dirs[0].nombre}» no tiene fotos.`, 'err'); return; }
+    imgs.sort((a, b) => a.ruta.localeCompare(b.ruta, 'es', { numeric: true }));
+    const slots = getFotoSlots();
+    FPC.items = [];
+    for(const im of imgs){
+      const base = im.nombre.replace(/\.[^.]+$/, '');
+      const m = base.match(/^\s*(\d{1,2})\s*[.\-_)]\s*(.*)$/);
+      const num = m ? parseInt(m[1], 10) : 0, desc = (m ? m[2] : base).trim();
+      const slot = num >= 1 && num <= slots.length ? slots[num - 1] : null;
+      const etiqueta = desc || 'Sin etiqueta';
+      const yaEsta = (currentFotos || []).some(f => (slot && f.orden === num) || (fpcNorm(f.etiqueta) && fpcNorm(f.etiqueta) === fpcNorm(etiqueta)));
+      let file; try{ file = await im.handle.getFile(); }catch(e){ continue; }
+      FPC.items.push({ ...im, file, destino: slot ? slot.key : '__extra__', etiqueta, yaEsta, url: URL.createObjectURL(file) });
+    }
+    document.getElementById('fpcLista').innerHTML = FPC.items.map((it, i) => `
+      <div class="fpc-fila">
+        <input type="checkbox" class="fpcChk" data-i="${i}" ${it.yaEsta ? '' : 'checked'}>
+        <img src="${it.url}" alt="">
+        <div class="fpc-datos"><b>${escH(it.ruta)}</b> <small>${Math.round(it.file.size / 1024)} KB${it.yaEsta ? ' · parece que ya está en la app' : ''}</small>
+          <select class="fpcDest" data-i="${i}"><option value="__extra__">Foto adicional</option>${slots.map(s => `<option value="${escH(s.key)}" ${s.key === it.destino ? 'selected' : ''}>Casillero: ${escH(s.label)}</option>`).join('')}</select>
+          <input type="text" class="fpcEt" data-i="${i}" value="${escH(it.etiqueta)}" placeholder="Etiqueta" ${it.destino === '__extra__' ? '' : 'hidden'}>
+        </div>
+      </div>`).join('');
+    document.querySelectorAll('.fpcDest').forEach(s => s.addEventListener('change', () => { document.querySelector(`.fpcEt[data-i="${s.dataset.i}"]`).hidden = s.value !== '__extra__'; }));
+    document.getElementById('fpcAgregar').hidden = false;
+    fpcEstado(`${FPC.items.length} foto(s) en «${dirs[0].nombre}». Marca las que quieras agregar a la OT.`);
+  }catch(e){ console.error(e); fpcEstado('Error: ' + (e.message || e), 'err'); }
+}
+async function fpcAgregar(){
+  if(FPC.ocupado) return;
+  const elegidas = [...document.querySelectorAll('.fpcChk')].filter(c => c.checked).map(c => {
+    const i = +c.dataset.i;
+    return { it: FPC.items[i], destino: document.querySelector(`.fpcDest[data-i="${i}"]`).value, etiqueta: (document.querySelector(`.fpcEt[data-i="${i}"]`).value || '').trim() || 'Sin etiqueta' };
+  });
+  if(!elegidas.length){ fpcEstado('No hay ninguna foto marcada.', 'err'); return; }
+  if(!window.editingId && !validarFormulario()){ fpcEstado('Completa O.T., Cliente y Fecha para poder guardar las fotos.', 'err'); return; }
+  FPC.ocupado = true; document.getElementById('fpcAgregar').disabled = true;
+  let ok = 0; const fallos = [];
+  try{
+    for(const e of elegidas){
+      fpcEstado(`Subiendo ${ok + fallos.length + 1} de ${elegidas.length}… ${e.it.nombre}`);
+      try{
+        if(e.destino === '__extra__') await subirFotoASlot(e.it.file, e.etiqueta);
+        else { const s = getFotoSlots().find(x => x.key === e.destino); await subirFotoSlot(e.destino, s.label, e.it.file); }
+        ok++;
+      }catch(err){ fallos.push(`${e.it.nombre}: ${err.message || err}`); }
+    }
+  }finally{ FPC.ocupado = false; document.getElementById('fpcAgregar').disabled = false; }
+  document.getElementById('fpcLista').innerHTML = ''; document.getElementById('fpcAgregar').hidden = true;
+  FPC.items.forEach(it => URL.revokeObjectURL(it.url)); FPC.items = [];
+  fpcEstado(`Listo: ${ok} foto(s) agregadas a la OT.` + (fallos.length ? '\nCon error:\n' + fallos.join('\n') : ''), fallos.length ? 'err' : '');
+}
+document.getElementById('btnFotosPc').hidden = !window.showDirectoryPicker;
+document.getElementById('btnFotosPc').addEventListener('click', fpcAbrir);
+document.getElementById('fpcElegir').addEventListener('click', fpcElegir);
+document.getElementById('fpcAgregar').addEventListener('click', fpcAgregar);
+document.getElementById('fpcCerrar').addEventListener('click', () => { if(!FPC.ocupado){ document.getElementById('fpcOv').hidden = true; FPC.items.forEach(it => URL.revokeObjectURL(it.url)); } });
+
+/* ============================================================
    FOTOS — casilleros predefinidos + adicionales
    ============================================================ */
 function getFotoSlots(){
@@ -2426,7 +2542,9 @@ async function subirFotoASlot(file, etiqueta, orden){
   try{
     const ot = document.getElementById('f_ot').value.trim() || ingresoId.slice(0,8);
     const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-    const numero = orden || (currentFotos.length + 1);
+    // Las adicionales llevan un número mayor a los 12 casilleros y a cualquier foto ya existente: con "cantidad + 1" podían
+    // coincidir con el número de un casillero vacío y quedar escondidas dentro de él.
+    const numero = orden || Math.max(getFotoSlots().length + 1, ...(currentFotos || []).map(f => (f.orden || 0) + 1));
     const nombreArchivo = `${numero}_${sanitizarNombre(etiqueta)}_OT${sanitizarNombre(ot)}.${ext}`;
     const carpeta = carpetaIngreso(ingresoId);
     const path = `${carpeta}/${nombreArchivo}`;
@@ -2448,7 +2566,7 @@ async function subirFotoSlot(key, label, file){
   if(wrap){ wrap.insertAdjacentHTML('beforeend', `<div class="uploading"><span class="spinner"></span>Subiendo...</div>`); }
   try{
     const slotIndex = getFotoSlots().findIndex(s => s.key === key);
-    const orden = slotIndex >= 0 ? slotIndex + 1 : (currentFotos.length + 1);
+    const orden = slotIndex >= 0 ? slotIndex + 1 : undefined;
     // La foto anterior de este casillero se busca por posición o por nombre (igual que al dibujarlo),
     // para que al reemplazar no quede una foto duplicada si el nombre del equipo cambió.
     const existing = currentFotos.find(f => f.orden === orden || f.etiqueta === label);
