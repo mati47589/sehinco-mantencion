@@ -420,6 +420,8 @@
   .pc-fila{ display:flex; gap:10px; align-items:flex-start; padding:9px 2px; border-top:1px solid var(--border); font-size:14px; }
   .pc-fila input{ width:20px; height:20px; accent-color:var(--accent); flex-shrink:0; margin-top:2px; }
   .pc-fila small{ display:block; color:var(--text-dim); font-size:12px; }
+  .rot-caja{ height:min(52vh, 380px); display:flex; align-items:center; justify-content:center; overflow:hidden; background:#111; border-radius:10px; margin-bottom:12px; }
+  .rot-caja img{ max-width:none; transition:transform .18s; }
   .fpc-celda{ width:112px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface); padding:4px; cursor:pointer; font-size:10.5px; color:var(--text-dim); text-align:center; word-break:break-all; }
   .fpc-celda img{ width:100%; height:80px; object-fit:cover; border-radius:5px; display:block; margin-bottom:3px; }
   .fpc-celda:hover{ border-color:var(--accent); }
@@ -569,11 +571,6 @@
       body: blob
     });
     if(!resp.ok) throw new Error('Error subiendo foto a Cloudflare (HTTP ' + resp.status + ')');
-  }
-  async function eliminarFotoWorker(path){
-    try{
-      await fetchAuth(workerUrl(path), { method: 'DELETE' });
-    }catch(e){ console.error('eliminarFotoWorker', path, e); }
   }
   // Reduce el tamaño de la foto antes de subirla (mismo criterio que las herramientas admin).
   function comprimirImagen(file, maxDim, calidad){
@@ -877,6 +874,15 @@
     <p id="pcEstado"></p>
   </div>
 </div>
+<div id="rotOv" class="po-overlay" style="z-index:5800;" hidden>
+  <div class="po-box" style="max-width:560px;" role="dialog" aria-modal="true" aria-labelledby="rotTitulo">
+    <h3 id="rotTitulo">Revisa la foto</h3>
+    <p>Si la foto salió de lado o al revés, gírala antes de usarla.</p>
+    <div class="rot-caja" id="rotCaja"><img id="rotImg" alt=""></div>
+    <div class="po-botones"><button id="rotIzq" aria-label="Girar a la izquierda">↶ Girar</button><button id="rotDer" aria-label="Girar a la derecha">Girar ↷</button></div>
+    <div class="po-botones"><button id="rotCancelar">Cancelar</button><button id="rotUsar" class="primario">Usar esta foto</button></div>
+  </div>
+</div>
 <div id="fotOtOv" class="po-overlay pc-overlay" hidden>
   <div class="po-box" role="dialog" aria-modal="true" aria-labelledby="fotOtTitulo">
     <h3 id="fotOtTitulo">Elige la foto</h3>
@@ -900,7 +906,7 @@
   <button class="lb-next" id="lbNext" aria-label="Foto siguiente">›</button>
   <div class="lb-acciones" id="lbAcciones" hidden>
     <button id="lbReemplazar">Reemplazar foto</button>
-    <button id="lbEliminar" class="peligro">Eliminar foto</button>
+    <button id="lbEliminar" class="peligro">Quitar del casillero</button>
   </div>
 </div>
 
@@ -1629,8 +1635,11 @@ function abrirFotoVer(k){ lbIndice = k; lbEditable = false; mostrarFotoVer(); do
 function mostrarFotoVer(){
   const f = verFotos[lbIndice]; if(!f) return;
   lbReset();   // cada foto se abre ajustada a la pantalla
-  document.getElementById('lbAcciones').hidden = !lbEditable;
-  if(lbEditable) document.getElementById('lbReemplazar').hidden = !slotDeFoto(f);   // las fotos adicionales no tienen casillero: se borran y se suben de nuevo
+  // Solo las fotos que están en un casillero tienen acciones (Reemplazar / Quitar del casillero); las adicionales no se tocan
+  const tieneCasillero = lbEditable && !!slotDeFoto(f);
+  document.getElementById('lbAcciones').hidden = !tieneCasillero;
+  document.getElementById('lbReemplazar').hidden = !tieneCasillero;
+  document.getElementById('lbEliminar').hidden = !tieneCasillero;
   document.getElementById('lbImg').src = workerUrl(f.storage_path);
   document.getElementById('lbCap').textContent = `${f.etiqueta || ''} (${lbIndice + 1} / ${verFotos.length})`.trim();
 }
@@ -1963,7 +1972,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-14 · fotos del PC v2';
+const APP_VERSION = '2026-10-14 · fotos sin borrar + girar v1';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -2356,7 +2365,7 @@ function renderFotosList(fotos){
     const inner = found
       ? (() => {
           const url = workerUrl(found.storage_path);
-          return `<div class="thumb-wrap"><img src="${url}"></div><span class="badge-ok">${icon('check-circle')}</span><button class="remove-x" aria-label="Eliminar foto" onclick="event.stopPropagation(); eliminarFotoSlot('${found.id}','${found.storage_path}')">${icon('close')}</button>`;
+          return `<div class="thumb-wrap"><img src="${url}"></div><span class="badge-ok">${icon('check-circle')}</span><button class="remove-x" aria-label="Quitar del casillero" title="Quitar del casillero (la foto no se borra)" onclick="event.stopPropagation(); quitarFotoDeCasillero('${found.id}')">${icon('close')}</button>`;
         })()
       : `<div class="thumb-wrap"><span class="placeholder-icon">${icon('camera')}</span></div>`;
     // Casillero con foto: al tocarlo se ve en grande (con Reemplazar / Eliminar). Casillero vacío: tomar o elegir foto.
@@ -2374,8 +2383,7 @@ function renderFotosList(fotos){
         const url = workerUrl(f.storage_path);
         return `<div class="extra-fotos-row">
           <img src="${url}" onclick="verFotoForm('${f.id}')" alt="">
-          <span onclick="verFotoForm('${f.id}')" style="cursor:pointer;">${escH(f.etiqueta) || 'Sin etiqueta'}</span>
-          <button class="del-btn" aria-label="Eliminar foto" onclick="eliminarFotoSlot('${f.id}', '${f.storage_path}')">${icon('close')}</button>
+<span onclick="verFotoForm('${f.id}')" style="cursor:pointer;">${escH(f.etiqueta) || 'Sin etiqueta'}</span>
         </div>`;
       }).join('');
 }
@@ -2479,23 +2487,109 @@ function abrirFotosOT(){
   document.querySelectorAll('#fotOtLista .fpc-celda').forEach(b => b.addEventListener('click', () => asignarFotoACasillero(b.dataset.id)));
   document.getElementById('fotOtOv').hidden = false;
 }
+// Las fotos NUNCA se borran desde la OT: una foto que sale de un casillero (por quitarla o por reemplazarla) pasa a
+// "fotos adicionales". Se registra primero con su nuevo número y recién después se quita el registro viejo (el archivo no se toca).
+async function pasarAAdicional(foto, etiquetaNueva){
+  const slots = getFotoSlots();
+  const nuevoOrden = Math.max(slots.length + 1, ...(currentFotos || []).map(x => (x.orden || 0) + 1));
+  const choca = slots.some(s => s.label === foto.etiqueta);
+  const etiqueta = etiquetaNueva || (choca ? foto.etiqueta + ' (anterior)' : (foto.etiqueta || 'Sin etiqueta'));
+  const r = await api('/fotos', { method: 'POST', body: { ingreso_id: foto.ingreso_id || window.editingId, storage_path: foto.storage_path, etiqueta, orden: nuevoOrden } });
+  if(r.error) throw r.error;
+  const d = await api('/fotos/' + foto.id, { method: 'DELETE' }); if(d.error) throw d.error;
+}
+async function quitarFotoDeCasillero(fotoId){
+  const f = (currentFotos || []).find(x => x.id === fotoId), slot = f && slotDeFoto(f);
+  if(!f || !slot) return false;
+  if(!confirm(`¿Quitar esta foto de «${slot.label}»?\n\nNo se borra: queda en las fotos adicionales y la puedes volver a poner donde corresponda.`)) return false;
+  try{
+    await pasarAAdicional(f, `Quitada de «${slot.label}»`);
+    await refreshFotos(window.editingId);
+    showToast('Foto quitada del casillero (sigue en las adicionales)');
+    return true;
+  }catch(e){ console.error(e); showToast('No se pudo quitar la foto. Revisa tu conexión.', 'error'); return false; }
+}
+
+/* ---------- Vista previa con "Girar" antes de usar una foto ---------- */
+let _rot = null;
+function rotAjustar(){
+  if(!_rot) return;
+  const img = document.getElementById('rotImg'), caja = document.getElementById('rotCaja');
+  const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1, lado = _rot.deg % 180 !== 0;
+  const fit = Math.min(caja.clientWidth / (lado ? ih : iw), caja.clientHeight / (lado ? iw : ih), 1);
+  img.style.width = Math.round(iw * fit) + 'px'; img.style.height = Math.round(ih * fit) + 'px';
+  img.style.transform = `rotate(${_rot.deg}deg)`;
+}
+// Devuelve {file, girada} o null si se cancela. Si no se gira, devuelve el mismo archivo.
+function previsualizarYGirar(file, titulo){
+  return new Promise(resolve => {
+    _rot = { file, deg: 0, url: URL.createObjectURL(file), resolve };
+    const img = document.getElementById('rotImg');
+    img.onload = rotAjustar; img.style.transform = ''; img.src = _rot.url;
+    document.getElementById('rotTitulo').textContent = titulo ? `Revisa la foto — ${titulo}` : 'Revisa la foto';
+    document.getElementById('rotOv').hidden = false;
+  });
+}
+function rotCerrar(res){
+  document.getElementById('rotOv').hidden = true;
+  const r = _rot; _rot = null; if(!r) return;
+  URL.revokeObjectURL(r.url); r.resolve(res);
+}
+function rotarArchivo(file, grados){
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      const lado = grados % 180 !== 0, c = document.createElement('canvas');
+      c.width = lado ? img.naturalHeight : img.naturalWidth; c.height = lado ? img.naturalWidth : img.naturalHeight;
+      const cx = c.getContext('2d'); cx.translate(c.width / 2, c.height / 2); cx.rotate(grados * Math.PI / 180);
+      cx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+      c.toBlob(b => { URL.revokeObjectURL(url); b ? resolve(new File([b], (file.name || 'foto').replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' })) : reject(new Error('no se pudo girar la foto')); }, 'image/jpeg', 0.9);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('no se pudo leer la foto')); };
+    img.src = url;
+  });
+}
+document.getElementById('rotIzq').addEventListener('click', () => { if(_rot){ _rot.deg = (_rot.deg + 270) % 360; rotAjustar(); } });
+document.getElementById('rotDer').addEventListener('click', () => { if(_rot){ _rot.deg = (_rot.deg + 90) % 360; rotAjustar(); } });
+document.getElementById('rotCancelar').addEventListener('click', () => rotCerrar(null));
+document.getElementById('rotUsar').addEventListener('click', async () => {
+  if(!_rot) return;
+  if(_rot.deg === 0){ rotCerrar({ file: _rot.file, girada: false }); return; }
+  const btn = document.getElementById('rotUsar'); btn.disabled = true;
+  try{ rotCerrar({ file: await rotarArchivo(_rot.file, _rot.deg), girada: true }); }
+  catch(e){ console.error(e); showToast('No se pudo girar la foto', 'error'); }
+  finally{ btn.disabled = false; }
+});
+
 async function asignarFotoACasillero(fotoId){
   const dest = _fotOtDestino, f = (currentFotos || []).find(x => x.id === fotoId);
   if(!dest || !f || !window.editingId) return;
   const slots = getFotoSlots(), orden = slots.findIndex(s => s.key === dest.key) + 1;
   if(orden < 1) return;
-  const est = document.getElementById('fotOtEstado'); est.textContent = 'Moviendo la foto…';
+  const est = document.getElementById('fotOtEstado');
+  // Vista previa: se puede girar la foto antes de ponerla en el casillero
+  let archivo = null;
+  try{ const resp = await fetch(workerUrl(f.storage_path)); if(resp.ok){ const b = await resp.blob(); archivo = new File([b], (f.storage_path.split('/').pop() || 'foto.jpg'), { type: b.type || 'image/jpeg' }); } }catch(e){ console.warn('sin vista previa', e); }
+  let girada = false;
+  if(archivo){
+    const r = await previsualizarYGirar(archivo, dest.label);
+    if(!r) return;   // canceló: la ventana de fotos sigue abierta
+    girada = r.girada; archivo = r.file;
+  }
+  est.textContent = 'Moviendo la foto…';
   const registrar = (cuerpo) => api('/fotos', { method: 'POST', body: Object.assign({ ingreso_id: window.editingId }, cuerpo) });
   try{
-    // 1) Si el casillero ya tenía una foto, pasa a ser adicional (se registra primero y recién después se quita el registro viejo)
-    const previa = currentFotos.find(x => x.id !== f.id && (x.orden === orden || x.etiqueta === dest.label));
-    if(previa){
-      const nuevoOrden = Math.max(slots.length + 1, ...currentFotos.map(x => (x.orden || 0) + 1));
-      const choca = slots.some(s => s.label === previa.etiqueta);
-      const r1 = await registrar({ storage_path: previa.storage_path, etiqueta: choca ? previa.etiqueta + ' (anterior)' : (previa.etiqueta || 'Sin etiqueta'), orden: nuevoOrden });
-      if(r1.error) throw r1.error;
-      const d1 = await api('/fotos/' + previa.id, { method: 'DELETE' }); if(d1.error) throw d1.error;
+    if(girada){
+      // Foto girada = archivo nuevo: se sube al casillero (lo que había queda como adicional) y se quita el registro de la sin girar
+      document.getElementById('fotOtOv').hidden = true;
+      await subirFotoSlot(dest.key, dest.label, archivo);
+      const dd = await api('/fotos/' + f.id, { method: 'DELETE' }); if(dd.error) throw dd.error;
+      await refreshFotos(window.editingId);
+      return;
     }
+    // 1) Si el casillero ya tenía una foto, pasa a ser adicional
+    const previa = currentFotos.find(x => x.id !== f.id && (x.orden === orden || x.etiqueta === dest.label));
+    if(previa) await pasarAAdicional(previa);
     // 2) La foto elegida toma el casillero
     const r2 = await registrar({ storage_path: f.storage_path, etiqueta: dest.label, orden });
     if(r2.error) throw r2.error;
@@ -2520,8 +2614,12 @@ async function subirFotoSlot(key, label, file){
     const orden = slotIndex >= 0 ? slotIndex + 1 : undefined;
     // La foto anterior de este casillero se busca por posición o por nombre (igual que al dibujarlo),
     // para que al reemplazar no quede una foto duplicada si el nombre del equipo cambió.
+    // La foto que estaba en el casillero NO se borra: pasa a fotos adicionales.
     const existing = currentFotos.find(f => f.orden === orden || f.etiqueta === label);
-    if(existing){ await eliminarFotoSilencioso(existing.id, existing.storage_path); }
+    if(existing){
+      try{ await pasarAAdicional(existing); }
+      catch(e){ console.error(e); showToast('No se pudo reemplazar la foto. Revisa tu conexión.', 'error'); return; }
+    }
     await subirFotoASlot(file, label, orden);
   }finally{
     renderFotosList(currentFotos);
@@ -2544,13 +2642,13 @@ function cerrarFotoChoice(){
 }
 function dispararCamara(){ cerrarFotoChoice(); document.getElementById('globalCamInput').click(); }
 function dispararGaleria(){ cerrarFotoChoice(); document.getElementById('globalGalInput').click(); }
-function procesarFotoElegida(file){
+async function procesarFotoElegida(file){
   if(!file || !_fotoChoiceKey) return;
-  if(_fotoChoiceKey === '__extra__'){
-    subirFotoExtraArchivo(file, _fotoChoiceLabel || 'Sin etiqueta');
-  }else{
-    subirFotoSlot(_fotoChoiceKey, _fotoChoiceLabel, file);
-  }
+  const key = _fotoChoiceKey, label = _fotoChoiceLabel;
+  const r = await previsualizarYGirar(file, key === '__extra__' ? '' : label);   // vista previa: se puede girar antes de subirla
+  if(!r) return;
+  if(key === '__extra__') subirFotoExtraArchivo(r.file, label || 'Sin etiqueta');
+  else subirFotoSlot(key, label, r.file);
 }
 document.getElementById('globalCamInput').addEventListener('change', function(){
   const file = this.files[0]; this.value = '';
@@ -2568,27 +2666,6 @@ function abrirFotoChoiceExtra(){
 async function subirFotoExtraArchivo(file, etiqueta){
   await subirFotoASlot(file, etiqueta);
   document.getElementById('fotoEtiqueta').value = '';
-}
-
-// Borra primero el registro de la foto y después el archivo: si algo falla a mitad de camino,
-// queda un archivo suelto (inofensivo) y no una foto "fantasma" que apunta a un archivo borrado.
-// Devuelve true si se borró.
-async function eliminarFotoSilencioso(fotoId, path){
-  try{
-    const { error } = await api('/fotos/' + fotoId, { method:'DELETE' });
-    if(error){ console.error(error); return false; }
-    await eliminarFotoWorker(path);
-    return true;
-  }catch(e){ console.error(e); return false; }
-}
-
-async function eliminarFotoSlot(fotoId, path){
-  if(!confirm('¿Eliminar esta foto? No se puede deshacer.')) return false;
-  const ok = await eliminarFotoSilencioso(fotoId, path);
-  if(!ok){ showToast('No se pudo eliminar la foto. Revisa tu conexión.', 'error'); return false; }
-  await refreshFotos(window.editingId);
-  showToast('Foto eliminada');
-  return true;
 }
 
 /* ---------- Ver en grande una foto del formulario (con Reemplazar / Eliminar) ---------- */
@@ -2609,7 +2686,7 @@ function slotDeFoto(f){
 }
 document.getElementById('lbEliminar').addEventListener('click', async () => {
   const f = verFotos[lbIndice]; if(!f) return;
-  if(await eliminarFotoSlot(f.id, f.storage_path)) cerrarFotoVer();
+  if(await quitarFotoDeCasillero(f.id)) cerrarFotoVer();
 });
 document.getElementById('lbReemplazar').addEventListener('click', () => {
   const f = verFotos[lbIndice]; if(!f) return;
