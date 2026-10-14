@@ -423,6 +423,9 @@
   .fpc-fila{ display:flex; gap:10px; align-items:center; padding:8px 2px; border-top:1px solid var(--border); font-size:13px; flex-wrap:wrap; }
   .fpc-fila input[type=checkbox]{ width:20px; height:20px; accent-color:var(--accent); flex-shrink:0; }
   .fpc-fila img{ width:64px; height:48px; object-fit:cover; border:1px solid var(--border-strong); border-radius:6px; background:#eee; }
+  .fpc-celda{ width:112px; border:1px solid var(--border-strong); border-radius:8px; background:var(--surface); padding:4px; cursor:pointer; font-size:10.5px; color:var(--text-dim); text-align:center; word-break:break-all; }
+  .fpc-celda img{ width:100%; height:80px; object-fit:cover; border-radius:5px; display:block; margin-bottom:3px; }
+  .fpc-celda:hover{ border-color:var(--accent); }
   .fpc-fila .fpc-datos{ flex:1; min-width:180px; }
   .fpc-fila select, .fpc-fila input[type=text]{ width:100%; font-size:13px; padding:5px 6px; margin-top:4px; }
   #pcEstado{ white-space:pre-wrap; font-family:var(--mono); font-size:12.5px; }
@@ -925,6 +928,7 @@
   <div class="foto-choice-title" id="fotoChoiceTitle">Foto</div>
   <button class="foto-choice-btn" onclick="dispararCamara()"><span id="fcIconCam"></span>Tomar foto</button>
   <button class="foto-choice-btn" onclick="dispararGaleria()"><span id="fcIconGal"></span>Elegir de galería</button>
+  <button class="foto-choice-btn" id="fotoChoicePc" hidden onclick="fpcDesdeCasillero()"><span></span>Elegir de la carpeta de esta OT en el PC</button>
   <button class="foto-choice-btn cancel" onclick="cerrarFotoChoice()">Cancelar</button>
 </div>
 <input type="file" id="globalCamInput" accept="image/*" capture="environment" style="display:none;">
@@ -2330,7 +2334,31 @@ document.getElementById('pcCerrar').addEventListener('click', () => { if(!PC.ocu
    muestra sus fotos y sube a la OT las que se marquen. Las numeradas 1 a 12 ("3. CAJA ANTES.jpg") van al casillero de
    ese número; las demás, como fotos adicionales con su nombre de etiqueta. Las que ya están en la app salen sin marcar.
    ============================================================ */
-const FPC = { items: [], ocupado: false };
+const FPC = { items: [], ocupado: false, destino: null };   // destino: {key,label} cuando se llega desde un casillero
+// Miniatura liviana: así no se mantienen decenas de fotos de varios MB abiertas solo para mostrarlas
+async function fpcMiniatura(file){
+  try{
+    const bm = await createImageBitmap(file, { resizeWidth: 220, resizeQuality: 'low' });
+    const c = document.createElement('canvas'); c.width = bm.width; c.height = bm.height; c.getContext('2d').drawImage(bm, 0, 0);
+    if(bm.close) bm.close();
+    return c.toDataURL('image/jpeg', 0.7);
+  }catch(e){ return URL.createObjectURL(file); }
+}
+async function fpcDesdeCasillero(){
+  const key = _fotoChoiceKey, label = _fotoChoiceLabel;
+  cerrarFotoChoice();
+  FPC.destino = { key, label };
+  await fpcAbrir();
+}
+async function fpcElegirUna(i){
+  const it = FPC.items[i], dest = FPC.destino; if(!it || !dest || FPC.ocupado) return;
+  FPC.ocupado = true; fpcEstado('Subiendo ' + it.nombre + '…');
+  try{
+    document.getElementById('fpcOv').hidden = true;
+    if(dest.key === '__extra__') await subirFotoASlot(it.file, dest.label || 'Sin etiqueta');
+    else await subirFotoSlot(dest.key, dest.label, it.file);
+  }finally{ FPC.ocupado = false; FPC.items = []; FPC.destino = null; }
+}
 function fpcEstado(txt, tipo){ const e = document.getElementById('fpcEstado'); e.textContent = txt || ''; e.style.color = tipo === 'err' ? 'var(--danger, #c0392b)' : ''; }
 function fpcNorm(s){ return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim(); }
 async function fpcAbrir(){
@@ -2378,7 +2406,16 @@ async function fpcBuscar(){
       const etiqueta = desc || 'Sin etiqueta';
       const yaEsta = (currentFotos || []).some(f => (slot && f.orden === num) || (fpcNorm(f.etiqueta) && fpcNorm(f.etiqueta) === fpcNorm(etiqueta)));
       let file; try{ file = await im.handle.getFile(); }catch(e){ continue; }
-      FPC.items.push({ ...im, file, destino: slot ? slot.key : '__extra__', etiqueta, yaEsta, url: URL.createObjectURL(file) });
+      fpcEstado(`Leyendo las fotos… ${FPC.items.length + 1} de ${imgs.length}`);
+      FPC.items.push({ ...im, file, destino: slot ? slot.key : '__extra__', etiqueta, yaEsta, url: await fpcMiniatura(file) });
+    }
+    if(FPC.destino){   // se llegó desde un casillero: se elige UNA foto y va directo a ese casillero
+      document.getElementById('fpcInfo').textContent = `OT ${ot} — elige la foto para «${FPC.destino.label}»`;
+      document.getElementById('fpcLista').innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px;">${FPC.items.map((it, i) => `
+        <button type="button" class="fpc-celda" data-i="${i}" title="${escH(it.ruta)}"><img src="${it.url}" alt=""><span>${escH(it.nombre)}</span></button>`).join('')}</div>`;
+      document.querySelectorAll('.fpc-celda').forEach(b => b.addEventListener('click', () => fpcElegirUna(+b.dataset.i)));
+      fpcEstado(`${FPC.items.length} foto(s) en «${dirs[0].nombre}». Toca la que corresponde.`);
+      return;
     }
     document.getElementById('fpcLista').innerHTML = FPC.items.map((it, i) => `
       <div class="fpc-fila">
@@ -2419,7 +2456,8 @@ async function fpcAgregar(){
   fpcEstado(`Listo: ${ok} foto(s) agregadas a la OT.` + (fallos.length ? '\nCon error:\n' + fallos.join('\n') : ''), fallos.length ? 'err' : '');
 }
 document.getElementById('btnFotosPc').hidden = !window.showDirectoryPicker;
-document.getElementById('btnFotosPc').addEventListener('click', fpcAbrir);
+document.getElementById('fotoChoicePc').hidden = !window.showDirectoryPicker;
+document.getElementById('btnFotosPc').addEventListener('click', () => { FPC.destino = null; fpcAbrir(); });
 document.getElementById('fpcElegir').addEventListener('click', fpcElegir);
 document.getElementById('fpcAgregar').addEventListener('click', fpcAgregar);
 document.getElementById('fpcCerrar').addEventListener('click', () => { if(!FPC.ocupado){ document.getElementById('fpcOv').hidden = true; FPC.items.forEach(it => URL.revokeObjectURL(it.url)); } });
