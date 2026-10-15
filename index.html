@@ -1972,7 +1972,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-15 · informe con fotos v1';
+const APP_VERSION = '2026-10-15 · informe con fotos v2';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -2221,7 +2221,7 @@ async function pcBuscar(){
     PC.nuevas.sort((a, b) => String(b.ot).localeCompare(String(a.ot), 'es', { numeric: true }));
     document.getElementById('pcLista').innerHTML = PC.nuevas.map((r, i) => {
       const cli = (r.cliente || '').trim() || 'SIN CLIENTE', c = pcCarpetaDeCliente(cli);
-      if(r.completar) return `<label class="pc-fila"><input type="checkbox" class="pcChk" data-i="${i}" checked><span><b>OT ${escH(r.ot)}</b> · ${escH(cli)} · ${escH(r.fecha || '')}<small>Ya tiene carpeta («${escH((r.carpetaCliente ? r.carpetaCliente + ' / ' : '') + r.carpetaNombre)}») pero sin informe PDF: se agrega solo el informe «(tablet)»; no se toca nada más. Datos de informe en la app: ${escH(r.motivoInforme || '')}</small></span></label>`;
+      if(r.completar) return `<label class="pc-fila"><input type="checkbox" class="pcChk" data-i="${i}" checked><span><b>OT ${escH(r.ot)}</b> · ${escH(cli)} · ${escH(r.fecha || '')}<small>Ya tiene carpeta («${escH((r.carpetaCliente ? r.carpetaCliente + ' / ' : '') + r.carpetaNombre)}») pero sin informe PDF: se agrega solo el informe «(T)»; no se toca nada más. Datos de informe en la app: ${escH(r.motivoInforme || '')}</small></span></label>`;
       return `<label class="pc-fila"><input type="checkbox" class="pcChk" data-i="${i}" checked><span><b>OT ${escH(r.ot)}</b> · ${escH(cli)} · ${escH(r.fecha || '')}<small>Va a: ${c ? escH(c.nombre) : escH(pcNombreSeguro(cli.toUpperCase())) + ' (carpeta nueva)'} / OT ${escH(r.ot)}${r.repetida ? ' — ¡ese número ya tiene carpeta en el año! Se guarda aparte («OT ' + escH(r.ot) + ' (2)») y no se toca la existente' : ''}</small></span></label>`;
     }).join('');
     document.getElementById('pcGuardar').hidden = !PC.nuevas.length;
@@ -2299,6 +2299,15 @@ async function pcGenerarPdf(rec, fotosInforme){
     return pdf.output('blob');
   }finally{ area.innerHTML = ''; area.classList.remove('exportando'); }
 }
+// Nombre del archivo: INFORME OT 25950 (EQUIPO, KW, MARCA) (T).pdf — el equipo sale de "Equipo" de los datos de ingreso, la potencia y la
+// marca del motor (si no hay motor con ese dato, del primer componente que lo tenga). Lo que falte se omite. "(T)" = hecho en la tablet.
+function pcNombreInforme(data){
+  const t = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim().slice(0, 40);
+  const comps = data.componentes || [], motor = comps.find(c => c.nombre === 'MOTOR') || {};
+  const dato = (k) => t(motor[k]) || t((comps.find(c => t(c[k])) || {})[k]);
+  const partes = [t(data.diagnostico) || dato('equipo'), dato('potencia'), dato('marca')].filter(Boolean);
+  return pcNombreSeguro(`INFORME OT ${t(data.ot)}${partes.length ? ` (${partes.join(', ')})` : ''} (T)`).toUpperCase() + '.pdf';
+}
 async function pcEscribir(dir, nombre, blob){
   const fh = await dir.getFileHandle(nombre, { create: true });
   const w = await fh.createWritable(); await w.write(blob); await w.close();
@@ -2308,7 +2317,7 @@ async function pcGuardarOT(fila){
   if(error || !data) throw new Error((error && error.message) || 'no se pudo leer la OT');
   if(fila.completar){   // la carpeta ya existe: solo se agrega el informe, sin tocar fotos ni otros archivos
     const pdf = await pcGenerarPdf(escRec(mapFromSupabase(data)), pcFotosParaInforme(data.fotos));
-    await pcEscribir(fila.carpetaHandle, `Informe OT ${pcNombreSeguro(data.ot)} (tablet).pdf`, pdf);
+    await pcEscribir(fila.carpetaHandle, pcNombreInforme(data), pdf);
     return { carpeta: fila.carpetaNombre, fotos: 0 };
   }
   const nombreCli = (data.cliente || '').trim() || 'SIN CLIENTE';
@@ -2326,7 +2335,7 @@ async function pcGuardarOT(fila){
   const otDir = await cli.handle.getDirectoryHandle(nombreOT, { create: true });
   try{
     const pdf = await pcGenerarPdf(escRec(mapFromSupabase(data)), pcFotosParaInforme(data.fotos));
-    await pcEscribir(otDir, `Informe OT ${pcNombreSeguro(data.ot)} (tablet).pdf`, pdf);
+    await pcEscribir(otDir, pcNombreInforme(data), pdf);
     const fotos = (data.fotos || []).slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
     const usados = new Set(); let nFotos = 0;
     for(let i = 0; i < fotos.length; i += 4){
