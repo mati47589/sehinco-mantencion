@@ -1972,7 +1972,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-14 · fotos sin borrar + girar v2';
+const APP_VERSION = '2026-10-15 · fotos sin borrar + girar v3';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -2163,7 +2163,9 @@ async function pcOtTieneInforme(id){
   const { data, error } = await api('/ingresos/' + id + '?join=full');
   if(error || !data) return '';
   const t = (s) => String(s == null ? '' : s).trim();
-  const campos = { 'trabajo realizado': data.descripcion_trabajo, 'conclusión': data.conclusion, 'sugerencia': data.sugerencia, 'medida correctiva': data.medida_correctiva, 'observaciones': data.obs_general };
+  // "REALIZAR MANTENIMIENTO PREVENTIVO ANUAL" lo ponen solos el formulario y el importador en TODA OT: no es un dato escrito por nadie
+  const sugerencia = t(data.sugerencia).toUpperCase() === 'REALIZAR MANTENIMIENTO PREVENTIVO ANUAL' ? '' : data.sugerencia;
+  const campos = { 'trabajo realizado': data.descripcion_trabajo, 'conclusión': data.conclusion, 'sugerencia': sugerencia, 'medida correctiva': data.medida_correctiva, 'observaciones': data.obs_general };
   const llenos = Object.keys(campos).filter(k => t(campos[k]));
   if(llenos.length) return llenos.join(', ');
   if((data.repuestos || []).length) return `${data.repuestos.length} repuesto(s)`;
