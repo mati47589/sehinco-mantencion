@@ -1972,7 +1972,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-15 · fotos sin borrar + girar v3';
+const APP_VERSION = '2026-10-15 · informe con fotos v1';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -2249,13 +2249,35 @@ function pcCortes(pg, H){
   }
   return out;
 }
-async function pcGenerarPdf(rec){
+// Fotos que van en el informe: las que tienen descripción asociada = las de un casillero (orden 1 a 12) y las adicionales con un
+// nombre propio. Quedan fuera las sueltas (IMG_8290, "Sin etiqueta"), las "Quitada de «…»" y las "(anterior)".
+function pcFotosParaInforme(fotos){
+  const nSlots = getFotoSlots().length;
+  const sinNombre = (s) => { const e = String(s || '').trim(); return !e || /^(img|dsc[nf]?|pxl|mvimg|wp|vid|image|imagen|photo|foto|pic|pict|sam|cam|signal|telegram)[\s_\-]*[\d(]/i.test(e) || /^[\d\s_\-.()]*$/.test(e) || /^sin etiqueta$/i.test(e); };
+  return (fotos || []).filter(f => {
+    if(!f || !f.storage_path) return false;
+    if(/^Quitada de /i.test(f.etiqueta || '') || /\(anterior\)\s*$/i.test(f.etiqueta || '')) return false;
+    if(f.orden >= 1 && f.orden <= nSlots) return true;
+    return !sinNombre(f.etiqueta);
+  }).slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
+}
+// Hoja "ANEXO — FOTOGRAFIAS": dos fotos por fila, cada una con su descripción debajo
+function pcAnexoFotos(rec, fotos){
+  const celda = (f) => `<div style="width:345px;text-align:center;font-size:11px;"><img crossorigin="anonymous" src="${workerUrl(f.storage_path)}?pdf=1" style="max-width:345px;max-height:250px;border:1px solid #999;"><br>${escH(f.etiqueta || '')}</div>`;
+  let filas = '';
+  for(let i = 0; i < fotos.length; i += 2) filas += `<div style="display:flex;gap:14px;justify-content:center;align-items:flex-start;margin:10px 0;">${fotos.slice(i, i + 2).map(celda).join('')}</div>`;
+  return `<div class="doc-page flujo">${docHeader(rec, 'ANEXO — FOTOGRAFIAS')}${filas}${docFooter()}</div>`;
+}
+async function pcGenerarPdf(rec, fotosInforme){
   await pcCargarLibs();
   const area = document.getElementById('printArea');
   area.classList.add('exportando');
   try{
-    area.innerHTML = pageDatosIngreso(rec) + pageInforme(rec) + (rec.aplicaElectrica ? pageElectrica(rec) : '');
-    await Promise.all([...area.querySelectorAll('img')].map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; })));
+    area.innerHTML = pageDatosIngreso(rec) + pageInforme(rec) + (rec.aplicaElectrica ? pageElectrica(rec) : '') + (fotosInforme && fotosInforme.length ? pcAnexoFotos(rec, fotosInforme) : '');
+    await Promise.race([
+      Promise.all([...area.querySelectorAll('img')].map(i => i.complete ? 0 : new Promise(r => { i.onload = i.onerror = r; }))),
+      new Promise(r => setTimeout(r, 30000))   // si alguna foto no carga en 30 s, se sigue sin ella
+    ]);
     const pdf = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
     const MARG = 8 / 25.4 * 72, PT = (612 - 2 * MARG) / PC_ANCHO_HOJA, ESC = 2;
     let primera = true;
@@ -2263,7 +2285,8 @@ async function pcGenerarPdf(rec){
       const H = pg.getBoundingClientRect().height;
       const lienzo = await window.html2canvas(pg, { scale: ESC, backgroundColor: '#fff', useCORS: true, logging: false, scrollX: 0, scrollY: 0 });
       // Cabe en una hoja (si hace falta, un poco más chica, como al imprimir); si no, se corta en bloques
-      const trozos = H <= PC_ALTO_HOJA / ZOOM_MIN_HOJA ? [{ y0: 0, y1: H, k: Math.min(1, PC_ALTO_HOJA / H) }] : pcCortes(pg, H).map(([y0, y1]) => ({ y0, y1, k: 1 }));
+      const esAnexo = pg.classList.contains('flujo');   // la hoja de fotos se corta entre filas; las demás se achican hasta caber en una hoja
+      const trozos = !esAnexo && H <= PC_ALTO_HOJA / ZOOM_MIN_HOJA || esAnexo && H <= PC_ALTO_HOJA ? [{ y0: 0, y1: H, k: Math.min(1, PC_ALTO_HOJA / H) }] : pcCortes(pg, H).map(([y0, y1]) => ({ y0, y1, k: 1 }));
       for(const t of trozos){
         const sy = Math.round(t.y0 * ESC), alto = Math.max(1, Math.min(lienzo.height - sy, Math.round((t.y1 - t.y0) * ESC)));
         const c = document.createElement('canvas'); c.width = lienzo.width; c.height = alto;
@@ -2284,7 +2307,7 @@ async function pcGuardarOT(fila){
   const { data, error } = await api('/ingresos/' + fila.id + '?join=full');
   if(error || !data) throw new Error((error && error.message) || 'no se pudo leer la OT');
   if(fila.completar){   // la carpeta ya existe: solo se agrega el informe, sin tocar fotos ni otros archivos
-    const pdf = await pcGenerarPdf(escRec(mapFromSupabase(data)));
+    const pdf = await pcGenerarPdf(escRec(mapFromSupabase(data)), pcFotosParaInforme(data.fotos));
     await pcEscribir(fila.carpetaHandle, `Informe OT ${pcNombreSeguro(data.ot)} (tablet).pdf`, pdf);
     return { carpeta: fila.carpetaNombre, fotos: 0 };
   }
@@ -2302,7 +2325,7 @@ async function pcGuardarOT(fila){
   for(let k = 3; await existe(nombreOT) && k < 50; k++) nombreOT = `${base} (${k})`;
   const otDir = await cli.handle.getDirectoryHandle(nombreOT, { create: true });
   try{
-    const pdf = await pcGenerarPdf(escRec(mapFromSupabase(data)));
+    const pdf = await pcGenerarPdf(escRec(mapFromSupabase(data)), pcFotosParaInforme(data.fotos));
     await pcEscribir(otDir, `Informe OT ${pcNombreSeguro(data.ot)} (tablet).pdf`, pdf);
     const fotos = (data.fotos || []).slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
     const usados = new Set(); let nFotos = 0;
