@@ -180,6 +180,13 @@
   @keyframes spin{ to{ transform:rotate(360deg); } }
   .extra-fotos-row{ display:flex; align-items:center; gap:11px; padding:9px 0; border-bottom:1px solid var(--border); }
   .extra-fotos-row:last-of-type{ border-bottom:none; }
+  .extra-vacio{ display:flex; align-items:center; gap:11px; padding:9px 0; color:var(--text-faint); font-size:13px; }
+  .extra-vacio .vacio-ico{ width:42px; height:42px; border-radius:8px; background:var(--bg-elevated); display:flex; align-items:center; justify-content:center; flex-shrink:0; color:var(--text-faint); }
+  .extra-vacio .vacio-ico svg{ width:22px; height:22px; }
+  .extra-fotos-row .thumb-ex{ position:relative; width:42px; height:42px; flex-shrink:0; }
+  .extra-fotos-row .thumb-ex img{ width:42px; height:42px; }
+  .extra-fotos-row .badge-ok{ position:absolute; top:-4px; right:-4px; background:var(--brand); color:var(--on-brand); width:16px; height:16px; border-radius:50%; display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow-sm); }
+  .extra-fotos-row .badge-ok svg{ width:10px; height:10px; stroke-width:3; }
   .extra-fotos-row img{ width:42px; height:42px; object-fit:cover; border-radius:8px; flex-shrink:0; }
   .extra-fotos-row span{ flex:1; font-size:13px; }
 
@@ -715,7 +722,7 @@
       <div id="fotosExtra"></div>
       <div class="add-item">
         <input type="text" id="fotoEtiqueta" placeholder="Etiqueta (ej: DETALLE SELLO)">
-        <button class="btn-mini" onclick="abrirFotoChoiceExtra()"><span class="mini-icon"></span>Subir</button>
+        <button class="btn-mini" onclick="abrirFotoChoiceExtra()"><span class="mini-icon foto-ico"></span>Subir</button>
       </div>
       <div class="hint">Toca un casillero para elegir cámara o galería. Si aún no has guardado el registro, se crea automáticamente al subir la primera foto.</div>
     </div>
@@ -952,7 +959,7 @@ document.querySelectorAll('.card[data-icon]').forEach(card => {
 });
 const CHEV_SVG = '<svg class="icon" viewBox="0 0 24 24" style="width:16px;height:16px;"><path d="M6 9l6 6 6-6"/></svg>';
 document.querySelectorAll('.chev').forEach(el => el.innerHTML = CHEV_SVG);
-document.querySelectorAll('.mini-icon').forEach(el => el.innerHTML = icon('plus'));
+document.querySelectorAll('.mini-icon').forEach(el => el.innerHTML = icon(el.classList.contains('foto-ico') ? 'camera' : 'plus'));
 document.getElementById('btnSave').querySelector('.fab-icon').innerHTML = icon('save');
 document.getElementById('navNew').querySelector('.tab-icon').innerHTML = icon('plus');
 document.getElementById('navList').querySelector('.tab-icon').innerHTML = icon('list');
@@ -2070,7 +2077,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-11-17 · OT repetida abre la última v2';
+const APP_VERSION = '2026-11-17 · fotos adicionales con ícono';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
@@ -2526,11 +2533,11 @@ function renderFotosList(fotos){
   const extras = currentFotos.filter(f => !slots.some((s, idx) => f.orden === idx + 1 || f.etiqueta === s.label));
   const extraEl = document.getElementById('fotosExtra');
   extraEl.innerHTML = extras.length === 0
-    ? '<div class="empty-hint">Sin fotos adicionales.</div>'
+    ? `<div class="extra-vacio"><span class="vacio-ico">${icon('camera')}</span><span>Sin fotos adicionales.</span></div>`
     : extras.map(f => {
         const url = workerUrl(f.storage_path);
         return `<div class="extra-fotos-row">
-          <img src="${url}" onclick="verFotoForm('${f.id}')" alt="">
+          <div class="thumb-ex"><img src="${url}" onclick="verFotoForm('${f.id}')" alt=""><span class="badge-ok">${icon('check-circle')}</span></div>
 <span onclick="verFotoForm('${f.id}')" style="cursor:pointer;">${escH(f.etiqueta) || 'Sin etiqueta'}</span>
         </div>`;
       }).join('');
