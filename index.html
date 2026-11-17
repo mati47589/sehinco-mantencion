@@ -316,6 +316,14 @@
   [hidden]{ display:none !important; }
   .list-filters{ display:flex; gap:10px; align-items:center; padding:6px 14px 4px; flex-wrap:wrap; }
   .list-filters select{ flex:1; min-width:220px; font-family:var(--sans); font-size:15px; text-transform:none; }
+  .ot-aviso{ border:1.5px solid var(--accent, #e8590c); border-radius:10px; padding:10px 12px; background:var(--surface-2); display:flex; flex-direction:column; gap:8px; font-size:13.5px; }
+  .ot-aviso .ot-v{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .ot-aviso .ot-v span.t{ flex:1 1 200px; min-width:0; }
+  .ot-aviso button{ font:inherit; font-weight:600; border-radius:8px; border:1px solid var(--border, #cbd5d9); background:var(--surface, #fff); color:inherit; padding:7px 12px; min-height:40px; cursor:pointer; }
+  .ot-aviso button.prim{ background:var(--accent, #e8590c); color:#fff; border-color:transparent; }
+  .chip.vers{ border:0; font:inherit; font-size:12px; font-weight:600; cursor:pointer; background:var(--surface-2); color:var(--text-dim); outline:1.5px solid var(--accent, #e8590c); }
+  .banda-versiones{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:6px 14px 4px; padding:9px 12px; border-radius:10px; border:1.5px solid var(--accent, #e8590c); background:var(--surface-2); font-size:13.5px; }
+  .banda-versiones button{ font:inherit; font-weight:600; border-radius:8px; border:1px solid var(--border, #cbd5d9); background:var(--surface, #fff); color:inherit; padding:7px 12px; min-height:40px; cursor:pointer; }
   .list-summary{ font-size:12.5px; color:var(--text-dim); font-family:var(--mono); }
   .rec-card{ cursor:pointer; }
   .rec-actions .btn-ver{ background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:800; }
@@ -663,6 +671,7 @@
         <div class="field"><label>C.O.T.</label><input type="text" id="f_cot" placeholder="Opcional"></div>
         <div class="field"><label>Código equipo</label><input type="text" id="f_codigo" placeholder="4B SP1"></div>
         <div class="field"><label>Fecha</label><input type="date" id="f_fecha"></div>
+        <div class="field span2" id="otAviso" hidden></div>
         <div class="field span2"><label>Cliente</label>
           <div class="combo-wrap" id="clienteCombo">
             <input type="text" id="f_cliente" placeholder="CERVECERA CCU CHILE LTDA" autocomplete="off">
@@ -824,6 +833,7 @@
     <select id="clienteFiltro" aria-label="Filtrar por cliente"><option value="">Todos los clientes</option></select>
     <span class="list-summary" id="listaResumen"></span>
   </div>
+  <div class="banda-versiones" id="bandaVersiones" hidden></div>
   <div id="recList"></div>
 </div>
 
@@ -1252,6 +1262,46 @@ function collectRecord(existingId){
   };
 }
 
+/* ---------- OT repetida en "Nuevo": avisa y permite copiar los datos de la anterior ---------- */
+let _otAvisoSeq = 0, _tOtAviso = null;
+function ocultarAvisoOt(){ _otAvisoSeq++; const b = document.getElementById('otAviso'); if(b){ b.hidden = true; b.innerHTML = ''; } }
+async function revisarOtRepetida(){
+  const b = document.getElementById('otAviso'), ot = document.getElementById('f_ot').value.trim();
+  const mia = ++_otAvisoSeq;
+  if(!ot || ot.length < 3 || window.editingId){ b.hidden = true; b.innerHTML = ''; return; }
+  const { data, error } = await api('/ingresos?ot=' + encodeURIComponent(ot));
+  if(mia !== _otAvisoSeq) return;
+  if(error || !data || !data.length || window.editingId){ b.hidden = true; b.innerHTML = ''; return; }
+  const filas = data.slice().sort((x, y) => String(y.fecha || '').localeCompare(String(x.fecha || '')));
+  b.hidden = false;
+  b.innerHTML = `<div><b>⚠️ La OT ${escH(ot)} ya existe${filas.length > 1 ? ' (' + filas.length + ' versiones)' : ''}.</b> Puedes copiar sus datos del equipo a esta OT nueva, o abrir la anterior para editarla.</div>` +
+    filas.map(r => `<div class="ot-v"><span class="t">📅 ${escH(fmtDate(r.fecha))} · ${escH(r.cliente || 'Sin cliente')}${r.diagnostico ? ' · ' + escH(r.diagnostico) : ''}</span>
+      <button type="button" class="prim" onclick="copiarDatosDeOt('${escH(r.id)}')">Copiar datos a esta OT nueva</button>
+      <button type="button" onclick="ocultarAvisoOt(); editRecord('${escH(r.id)}')">Editar esa</button></div>`).join('');
+}
+document.getElementById('f_ot').addEventListener('input', () => { clearTimeout(_tOtAviso); _tOtAviso = setTimeout(revisarOtRepetida, 500); });
+document.getElementById('f_ot').addEventListener('change', () => { clearTimeout(_tOtAviso); revisarOtRepetida(); });
+
+// Copia a la OT NUEVA (no toca la anterior) los datos del equipo: cliente, código, equipo y la ficha de cada componente (placa, rodamientos, sellos...).
+// NO copia lo del trabajo de aquel día: descripción, conclusión, mediciones eléctricas, repuestos, listas de chequeo, fotos, guía ni C.O.T.
+async function copiarDatosDeOt(id){
+  const { data, error } = await api('/ingresos/' + id + '?join=full');
+  if(error || !data){ showToast('No se pudo cargar la OT anterior', 'error'); return; }
+  const rec = mapFromSupabase(data);
+  window.editingId = null;
+  const poner = (idc, v) => { const e = document.getElementById(idc); if(e) e.value = v || ''; };
+  poner('f_cliente', rec.cliente); poner('f_codigo', rec.codigoEquipo); poner('f_diagnostico', rec.diagnostico);
+  const vieja = rec.componentes || [];
+  const motor = vieja.find(c => c.nombre === 'MOTOR'), bomba = vieja.find(c => c.nombre === 'BOMBA');
+  const limpia = (c, nombre) => ({ ...COMPONENT_FIELDS_TEMPLATE(), ...(c || {}), nombre,
+    motorQuemado: false, ventiladorDañado: false, encamizado: false, encamizadoValor: '', observacion: '' });
+  state.componentes = [limpia(motor || vieja[0], 'MOTOR'), limpia(bomba || vieja[1], 'BOMBA')];
+  state.activeComp = 0;
+  renderCompSwitch(); renderCompPanes();
+  ocultarAvisoOt();
+  showToast('Datos copiados de la OT del ' + fmtDate(rec.fecha) + '. Revísalos y completa el trabajo.');
+}
+
 async function saveRecord(){
   if(!validarFormulario()) return;
   const btn = document.getElementById('btnSave');
@@ -1300,6 +1350,7 @@ async function saveRecord(){
     if(error) throw error;
     const ingresoId = guardado.id;
     window.editingId = ingresoId;
+    ocultarAvisoOt();
     await refreshFotos(ingresoId);
     showToast('Registro guardado ✓');
     await refreshCount();
@@ -1314,7 +1365,7 @@ async function saveRecord(){
 document.getElementById('btnSave').addEventListener('click', saveRecord);
 
 function resetForm(){
-  window.editingId = null;
+  window.editingId = null; ocultarAvisoOt();
   renderFotosList([]);
   document.getElementById('f_ot').value='';
   document.getElementById('f_cot').value='';
@@ -1434,6 +1485,7 @@ const PAGINA_LISTA = 50;
 let listaVisible = [];       // tarjetas ya cargadas, en el orden mostrado (más recientes primero)
 let listaTotal = 0;          // cuántas OT cumplen el filtro actual (cargadas o no)
 let clientesInfo = null, clientesInfoHasta = 0;   // [{clave, nombre, n, crudos:[nombres tal como están guardados]}] + total
+let otExacta = '';              // si tiene valor, la lista muestra solo las versiones (todos los años) de esa OT
 let _solicitudLista = 0;     // para ignorar respuestas viejas si el usuario sigue escribiendo
 const _detalles = new Map(); // detalle completo de las últimas OT abiertas en el visor
 function normCliente(s){ return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim(); }
@@ -1472,13 +1524,14 @@ function actualizarFiltroClientes(){
 
 function filaDeLista(r){
   return { id: r.id, ot: r.ot, cliente: r.cliente, fecha: r.fecha, tecnico: r.tecnico, diagnostico: r.diagnostico,
-           aplicaElectrica: !!r.aplica_electrica, nFotos: r.n_fotos || 0, comps: (r.comps || '').split(',').map(s => s.trim()).filter(Boolean) };
+           aplicaElectrica: !!r.aplica_electrica, nFotos: r.n_fotos || 0, otrosAnios: (r.otros_anios || '').split(',').map(s => s.trim()).filter(Boolean), comps: (r.comps || '').split(',').map(s => s.trim()).filter(Boolean) };
 }
 function parametrosLista(offset){
   const p = new URLSearchParams();
   p.set('limit', PAGINA_LISTA); p.set('offset', offset);
   const q = (document.getElementById('searchBox').value || '').trim();
   if(q) p.set('q', q);
+  if(otExacta) p.set('ot_exacta', otExacta);
   const clave = document.getElementById('clienteFiltro').value;
   if(clave){
     if(clave === '__sin__') p.set('sin_cliente', '1');
@@ -1487,7 +1540,7 @@ function parametrosLista(offset){
   }
   return p;
 }
-function hayFiltros(){ return !!((document.getElementById('searchBox').value || '').trim() || document.getElementById('clienteFiltro').value); }
+function hayFiltros(){ return !!(otExacta || (document.getElementById('searchBox').value || '').trim() || document.getElementById('clienteFiltro').value); }
 
 // renderList(): vuelve a pedir la primera página con los filtros actuales.
 // renderList(true): solo vuelve a dibujar lo ya cargado (sin consultar), p. ej. al entrar o salir del modo administrador.
@@ -1518,7 +1571,25 @@ async function cargarMasLista(){
   listaVisible.push(...data.filas.map(filaDeLista)); listaTotal = data.total;
   pintarLista();
 }
+function textoAnios(anios){
+  const n = {}; anios.forEach(a => { n[a] = (n[a] || 0) + 1; });
+  return Object.keys(n).sort().reverse().map(a => a + (n[a] > 1 ? ' ×' + n[a] : '')).join(', ');
+}
+function pintarBandaVersiones(){
+  const b = document.getElementById('bandaVersiones');
+  if(!otExacta){ b.hidden = true; b.innerHTML = ''; return; }
+  b.hidden = false;
+  b.innerHTML = `<span style="flex:1 1 220px"><b>Todas las versiones de la OT ${escH(otExacta)}</b> (de todos los años)</span><button type="button" onclick="volverALaLista()">Volver a la lista</button>`;
+}
+function verVersionesOt(ot){
+  otExacta = String(ot || '').trim();
+  document.getElementById('searchBox').value = '';
+  document.getElementById('clienteFiltro').value = '';
+  renderList();
+}
+function volverALaLista(){ otExacta = ''; renderList(); }
 function pintarLista(){
+  pintarBandaVersiones();
   const el = document.getElementById('recList');
   const total = clientesInfo ? clientesInfo.total : listaTotal;
   document.getElementById('listaResumen').textContent = (hayFiltros() || listaTotal !== total) ? `${listaTotal} de ${total} OT` : `${listaTotal} OT`;
@@ -1535,6 +1606,7 @@ function pintarLista(){
         ${r.comps.map(c => `<span class="chip">${escH(c)}</span>`).join('') || '<span class="chip">Sin componentes</span>'}
         ${r.tecnico ? `<span class="chip">👤 ${escH(r.tecnico)}</span>` : ''}
         ${r.nFotos ? `<span class="chip">📷 ${r.nFotos}</span>` : ''}
+        ${(r.otrosAnios.length && !otExacta) ? `<button type="button" class="chip vers" onclick="event.stopPropagation(); verVersionesOt('${escH(r.ot)}')" title="Ver esta OT en otros años">📅 Otras versiones: ${escH(textoAnios(r.otrosAnios))}</button>` : ''}
       </div>
       <div class="rec-actions">
         <button class="btn-ver" onclick="event.stopPropagation(); verRecord('${escH(r.id)}')">Ver</button>
@@ -1761,7 +1833,7 @@ async function editRecord(id){
   const { data, error } = await api('/ingresos/' + id + '?join=full');
   if(error){ console.error(error); showToast('No se pudo cargar el registro', 'error'); return; }
   const rec = mapFromSupabase(data);
-  window.editingId = rec.id;
+  window.editingId = rec.id; ocultarAvisoOt();
   document.getElementById('f_ot').value = rec.ot||'';
   document.getElementById('f_cot').value = rec.cot||'';
   document.getElementById('f_codigo').value = rec.codigoEquipo||'';
@@ -1972,7 +2044,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-10-15 · informe con fotos v2';
+const APP_VERSION = '2026-11-17 · OT repetida y versiones por año';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
