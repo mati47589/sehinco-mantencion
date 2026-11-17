@@ -1262,25 +1262,51 @@ function collectRecord(existingId){
   };
 }
 
-/* ---------- OT repetida en "Nuevo": avisa y permite copiar los datos de la anterior ---------- */
-let _otAvisoSeq = 0, _tOtAviso = null;
+/* ---------- OT repetida en "Nuevo": si el N° ya existe, se abre su ÚLTIMA versión para seguir editándola ---------- */
+let _otAvisoSeq = 0, _otSuprimida = '';
 function ocultarAvisoOt(){ _otAvisoSeq++; const b = document.getElementById('otAviso'); if(b){ b.hidden = true; b.innerHTML = ''; } }
+function formularioConDatos(){ return ['f_cliente','f_diagnostico','f_tecnico','f_codigo','f_guia','f_cot'].some(i => (document.getElementById(i).value || '').trim()); }
 async function revisarOtRepetida(){
   const b = document.getElementById('otAviso'), ot = document.getElementById('f_ot').value.trim();
   const mia = ++_otAvisoSeq;
-  if(!ot || ot.length < 3 || window.editingId){ b.hidden = true; b.innerHTML = ''; return; }
+  if(!ot || ot.length < 3 || window.editingId || ot === _otSuprimida){ b.hidden = true; b.innerHTML = ''; return; }
   const { data, error } = await api('/ingresos?ot=' + encodeURIComponent(ot));
   if(mia !== _otAvisoSeq) return;
   if(error || !data || !data.length || window.editingId){ b.hidden = true; b.innerHTML = ''; return; }
-  const filas = data.slice().sort((x, y) => String(y.fecha || '').localeCompare(String(x.fecha || '')));
-  b.hidden = false;
-  b.innerHTML = `<div><b>⚠️ La OT ${escH(ot)} ya existe${filas.length > 1 ? ' (' + filas.length + ' versiones)' : ''}.</b> Puedes copiar sus datos del equipo a esta OT nueva, o abrir la anterior para editarla.</div>` +
-    filas.map(r => `<div class="ot-v"><span class="t">📅 ${escH(fmtDate(r.fecha))} · ${escH(r.cliente || 'Sin cliente')}${r.diagnostico ? ' · ' + escH(r.diagnostico) : ''}</span>
-      <button type="button" class="prim" onclick="copiarDatosDeOt('${escH(r.id)}')">Copiar datos a esta OT nueva</button>
-      <button type="button" onclick="ocultarAvisoOt(); editRecord('${escH(r.id)}')">Editar esa</button></div>`).join('');
+  // la más reciente: por fecha y, si empatan, por la última vez que se guardó
+  const filas = data.slice().sort((x, y) => String(y.fecha || '').localeCompare(String(x.fecha || '')) || String(y.created_at || '').localeCompare(String(x.created_at || '')));
+  if(formularioConDatos() && !confirm(`La OT ${ot} ya existe (${fmtDate(filas[0].fecha)} · ${filas[0].cliente || 'sin cliente'}).\n\n¿Abrir su última versión para seguir editándola? Se reemplaza lo que escribiste en el formulario.`)){
+    _otSuprimida = ot; b.hidden = true; b.innerHTML = ''; return;
+  }
+  await abrirUltimaDeOt(filas);
 }
-document.getElementById('f_ot').addEventListener('input', () => { clearTimeout(_tOtAviso); _tOtAviso = setTimeout(revisarOtRepetida, 500); });
-document.getElementById('f_ot').addEventListener('change', () => { clearTimeout(_tOtAviso); revisarOtRepetida(); });
+async function abrirUltimaDeOt(filas){
+  const ot = filas[0].ot;
+  await editRecord(filas[0].id);
+  if(window.editingId !== filas[0].id) return;       // no se pudo cargar
+  const b = document.getElementById('otAviso');
+  const otras = filas.slice(1);
+  b.hidden = false;
+  b.innerHTML = `<div><b>📂 Se abrió la última versión de la OT ${escH(ot)}</b> (${escH(fmtDate(filas[0].fecha))} · ${escH(filas[0].cliente || 'Sin cliente')}). Sigue editándola y pulsa Guardar para actualizarla.</div>` +
+    otras.map(r => `<div class="ot-v"><span class="t">También existe la del ${escH(fmtDate(r.fecha))} · ${escH(r.cliente || 'Sin cliente')}</span><button type="button" onclick="abrirVersionDeOt('${escH(r.id)}')">Abrir esa</button></div>`).join('') +
+    `<div class="ot-v"><span class="t">¿Es otro trabajo con el mismo número?</span><button type="button" onclick="nuevaConMismoNumero('${escH(filas[0].id)}')">Crear una OT nueva con este número</button></div>`;
+  showToast('OT ' + ot + ': se abrió la última versión guardada');
+}
+async function abrirVersionDeOt(id){
+  const b = document.getElementById('otAviso'), previo = b.innerHTML;
+  await editRecord(id);
+  if(window.editingId !== id) return;
+  b.hidden = false; b.innerHTML = '<div><b>📂 Abierta otra versión de esta OT.</b> Sigue editándola y pulsa Guardar para actualizarla.</div>';
+}
+// Para cuando el mismo número se usa de nuevo (otro semestre/año): parte una OT nueva y trae solo los datos del equipo.
+async function nuevaConMismoNumero(idBase){
+  const ot = document.getElementById('f_ot').value.trim();
+  resetForm();
+  document.getElementById('f_ot').value = ot;
+  _otSuprimida = ot;
+  await copiarDatosDeOt(idBase);
+}
+document.getElementById('f_ot').addEventListener('change', () => { revisarOtRepetida(); });
 
 // Copia a la OT NUEVA (no toca la anterior) los datos del equipo: cliente, código, equipo y la ficha de cada componente (placa, rodamientos, sellos...).
 // NO copia lo del trabajo de aquel día: descripción, conclusión, mediciones eléctricas, repuestos, listas de chequeo, fotos, guía ni C.O.T.
@@ -1365,7 +1391,7 @@ async function saveRecord(){
 document.getElementById('btnSave').addEventListener('click', saveRecord);
 
 function resetForm(){
-  window.editingId = null; ocultarAvisoOt();
+  window.editingId = null; ocultarAvisoOt(); _otSuprimida = '';
   renderFotosList([]);
   document.getElementById('f_ot').value='';
   document.getElementById('f_cot').value='';
@@ -2044,7 +2070,7 @@ async function printRecord(id){
   abrirOpcionesImpresion(_recImprimir);
 }
 // Cambia cada vez que se publica una versión nueva: sirve para comprobar que el tablet/navegador ya la está usando
-const APP_VERSION = '2026-11-17 · OT repetida y versiones por año';
+const APP_VERSION = '2026-11-17 · OT repetida abre la última v2';
 function abrirOpcionesImpresion(rec){
   document.getElementById('poVersion').textContent = 'Versión de la app: ' + APP_VERSION;
   const nFotos = (rec.fotos || []).length;
